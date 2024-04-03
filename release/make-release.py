@@ -23,10 +23,10 @@ LABEL_CATEGORIES = {
 
 def validate_commit_hash(_ctx, _param, commit_hash: str):
     if not all(c in string.hexdigits for c in commit_hash):
-        raise click.BadParameter("Commit hash '{commit_hash}' is not hexadecimal")
+        raise click.BadParameter(f"Commit hash '{commit_hash}' is not hexadecimal")
     if len(commit_hash) < MIN_HASH_LENGTH:
         raise click.BadParameter(
-            "Commit hash '{commit_hash}' too short: min length is {MIN_HASH_LENGTH}"
+            f"Commit hash '{commit_hash}' too short: min length is {MIN_HASH_LENGTH}"
         )
     return commit_hash
 
