@@ -19,9 +19,24 @@ Options:
   --help          Show this message and exit.
 ```
 
+### Rate Limiting
+
+GitHub's API has a low per-IP rate limit for unauthenticated requests, you might regularly hit this
+when working on a shared network. To get a higher rate limit, the script automatically checks for a
+token in a file named `TOKEN`. You can use the [GitHub CLI](https://cli.github.com/) to quickly
+generate a token:
+
+```sh
+$ gh auth login
+$ gh auth token > TOKEN
+```
+
+Alternatively, you can manually create a [personal access
+token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
 ### Example
 
-```bash
+```sh
 $ pip install -r requirements.txt
 $ python3 make-release.py \
     --repo https://github.com/opensearch-project/dashboards-observability \

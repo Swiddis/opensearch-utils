@@ -1,12 +1,9 @@
-import collections
-import json
 import re
 import string
 import sys
 
 import click
 import requests
-from tqdm import tqdm
 
 
 MIN_HASH_LENGTH = 7
@@ -19,6 +16,71 @@ LABEL_CATEGORIES = {
     "maintenance": "Maintenance",
     "unknown": "UNKNOWN (Needs Manual Categorization)",
 }
+
+
+def get_token() -> str | None:
+    try:
+        with open("TOKEN", "r") as F:
+            return F.read().strip()
+    except FileNotFoundError:
+        return None
+
+
+class GitHubClient:
+    _token: str | None = None
+
+    def __init__(self, owner, repo):
+        self.owner = owner
+        self.repo = repo
+        self.base_url = f"https://api.github.com/repos/{owner}/{repo}"
+        self._init_token()
+
+    def _init_token(self):
+        try:
+            with open("TOKEN", "r") as token_file:
+                self._token = token_file.read().strip()
+        except FileNotFoundError:
+            self._token = None
+
+    def fetch(self, path):
+        url, headers = f"{self.base_url}/{path}", {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if self._token:
+            headers = {"Authorization": f"Bearer {self._token}"}
+
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(
+                f"Error {response.status_code}: {response.json()['message']}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    def fetch_commits(self, base_commit, head_commit):
+        data = self.fetch(f"compare/{base_commit}...{head_commit}")
+        commits = data.get("commits", [])
+        return commits
+
+    def fetch_merged_prs(self, targets: set[str]):
+        targets = targets.copy()
+        page_size = 50
+        # Assume that if the PR is not in the first 5 pages, it doesn't exist
+        for page in range(1, 6):
+            if not len(targets):
+                return
+            result = self.fetch(
+                f"pulls?state=closed&sort=updated&direction=desc&page={page}&per_page={page_size}"
+            )
+            for pr in result:
+                if str(pr["number"]) in targets:
+                    yield pr
+                    targets.remove(str(pr["number"]))
+            if len(result) < page_size:
+                return # Out of pages
 
 
 def validate_commit_hash(_ctx, _param, commit_hash: str):
@@ -43,74 +105,41 @@ def parse_repo_url(_ctx, _param, repo_url: str):
     return (owner, repo)
 
 
-def fetch_github(path):
-    # If repeatedly running this for lots of commits, the rate limit is severe. Try to cache:
-    try:
-        with open("cache.json", "r") as cachefile:
-            cache = json.load(cachefile)
-    except:
-        cache = {}
-    if path in cache:
-        return cache[path]
-
-    url = f"https://api.github.com/{path}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-
-        cache[path] = data
-        with open("cache.json", "w") as cachefile:
-            json.dump(cache, cachefile)
-
-        return data
-    else:
-        print(
-            f"Error {response.status_code}: {response.json()['message']}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def fetch_commits(owner, repo, base_commit, head_commit):
-    data = fetch_github(f"repos/{owner}/{repo}/compare/{base_commit}...{head_commit}")
-    commits = data.get("commits", [])
-    return commits
-
-
-def fetch_pull_req(owner, repo, pull_number):
-    data = fetch_github(f"repos/{owner}/{repo}/pulls/{pull_number}")
-    return data
-
-
-def parse_commit(owner, repo, commit):
-    message = commit["commit"]["message"].split("\n")[0]
-    message_parts = re.match(r".+?\(\#(\d+)\).*", message)
-    if not message_parts:
-        print(
-            f"WARN: Unable to parse commit {commit['sha']}: {message}; ignoring",
-            file=sys.stderr,
-        )
-        return None
-
-    parse = {
-        "pull_req": message_parts.group(1),
-    }
-    pull_req = fetch_pull_req(owner, repo, parse["pull_req"])
-    parse["author"] = pull_req["user"]["login"]
-    parse["title"] = pull_req["title"]
-    parse["labels"] = [label["name"] for label in pull_req["labels"]]
-
-    return parse
+def get_commit_pr(commit) -> str | None:
+    headline = commit["commit"]["message"].split("\n")[0]
+    linked_prs = re.findall(r"\(\#(\d+)\)", headline)
+    oldest_pr = min(linked_prs, key=int, default=None)
+    return oldest_pr
 
 
 def extract_category(labels):
+    labels = [label["name"] for label in labels]
     for category in LABEL_CATEGORIES:
         if category in labels:
             return category
     return "unknown"
 
 
-def make_notes(categories: dict[str, list], owner, repo, version):
+def assemble_contrib_data(pull_req):
+    return {
+        "pull_req": str(pull_req["number"]),
+        "author": pull_req["user"]["login"],
+        "title": pull_req["title"],
+        "category": extract_category(pull_req["labels"]),
+        "link": pull_req["html_url"]
+    }
+
+
+def split_categories(contrib_data: dict):
+    categories = {key: [] for key in LABEL_CATEGORIES}
+    for data in contrib_data:
+        categories[data["category"]].append(data)
+    return categories
+
+
+def make_notes(contrib_data: dict, version: str):
+    categories = split_categories(contrib_data)
+
     result = f"## Version {version} Release Notes\n\n"
     result += (
         f"Compatible with OpenSearch and OpenSearch Dashboards version {version}\n\n"
@@ -127,9 +156,9 @@ def make_notes(categories: dict[str, list], owner, repo, version):
                 if not pull_req["title"].startswith("[")
                 else pull_req["title"].split("]", maxsplit=1)[1]
             )
-            result += f"* {title.strip()} ([#{pull_req['pull_req']}](https://github.com/{owner}/{repo}/pull/{pull_req['pull_req']}))\n"
+            result += f"* {title.strip()} ([#{pull_req['pull_req']}]({pull_req['link']}))\n"
         result += "\n"
-    return result[:-2] # Remove extra trailing newlines
+    return result[:-2]  # Remove extra trailing newlines
 
 
 @click.command()
@@ -153,30 +182,35 @@ def make_notes(categories: dict[str, list], owner, repo, version):
     callback=validate_commit_hash,
 )
 @click.option(
-    "--version", help="The version to make the release notes for", default="[TODO]"
+    "--version", help="The version to make the release notes for", default="[VERSION]"
 )
 def make_release(repo_parts: tuple[str, str], start: str, end: str, version: str):
     owner, repo = repo_parts
+    client = GitHubClient(owner, repo)
 
     print(
         f"Generating release notes for commits {start[:7]}..{end[:7]} on {owner}/{repo}",
         file=sys.stderr,
     )
 
-    commits = fetch_commits(owner, repo, start, end)
+    commits = client.fetch_commits(start, end)
 
-    print(f"Found {len(commits)} commits", file=sys.stderr)
+    print(f"Found {len(commits)} commits, searching for associated PRs", file=sys.stderr)
 
-    categories = collections.defaultdict(lambda: [])
-    for commit in tqdm(commits, desc="Processing commits", file=sys.stderr):
-        parsed = parse_commit(owner, repo, commit)
-        if not parsed:
-            continue
-        categories[extract_category(parsed["labels"])].append(parsed)
+    pr_nums = {get_commit_pr(commit) for commit in commits}
+    pr_nums = {pc for pc in pr_nums if pc}
+    results = [
+        assemble_contrib_data(pr)
+        for pr in client.fetch_merged_prs(pr_nums)
+    ]
+
+    print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
+    if len(results) < len(pr_nums):
+        print(f"Unable to find PRs: {pr_nums - results}", file=sys.stderr)
 
     print("Generating notes", file=sys.stderr)
 
-    notes = make_notes(categories, owner, repo, version)
+    notes = make_notes(results, version)
     print(notes)
 
 

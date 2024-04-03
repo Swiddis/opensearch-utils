@@ -1,4 +1,9 @@
+# Python virtual environment
 venv
-cache.json
+
+# All markdown file output (except README)
 *.md
 !README.md
+
+# Github API auth token
+TOKEN
