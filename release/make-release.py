@@ -18,14 +18,6 @@ LABEL_CATEGORIES = {
 }
 
 
-def get_token() -> str | None:
-    try:
-        with open("TOKEN", "r") as F:
-            return F.read().strip()
-    except FileNotFoundError:
-        return None
-
-
 class GitHubClient:
     _token: str | None = None
 
