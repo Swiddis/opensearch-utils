@@ -20,6 +20,10 @@ if [ $1 == "up" ]; then
     if has_param "--bootstrap" "$@"; then
         yarn osd bootstrap --single-version=loose
     fi
+    if has_param "--force" "$@"; then
+        # Kill any already-running processes on 5601 before starting
+        kill $(lsof -t -i tcp:5601)
+    fi
     yarn start --no-base-path --host=0.0.0.0
     exit 0
 fi
