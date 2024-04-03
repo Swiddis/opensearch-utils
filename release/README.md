@@ -8,6 +8,7 @@ Requires Python 3.10+ for consistent results since it depends on `dict` being or
 ## Usage
 
 ```bash
+$ pip install -r requirements.txt
 $ python3 make-release.py --help
 Usage: make-release.py [OPTIONS]
 
@@ -37,7 +38,6 @@ token](https://docs.github.com/en/authentication/keeping-your-account-and-data-s
 ### Example
 
 ```sh
-$ pip install -r requirements.txt
 $ python3 make-release.py \
     --repo https://github.com/opensearch-project/dashboards-observability \
     --start 8b7966b09777980a6f7901eb6641e33785c93ae8 \
