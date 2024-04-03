@@ -17,7 +17,7 @@ has_param() {
 
 if [ $1 == "up" ]; then
     shift 1
-    if ! has_param "--no-bootstrap" "$@"; then
+    if has_param "--bootstrap" "$@"; then
         yarn osd bootstrap --single-version=loose
     fi
     yarn start --no-base-path --host=0.0.0.0
