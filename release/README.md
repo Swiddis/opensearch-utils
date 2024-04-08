@@ -14,7 +14,7 @@ Usage: make-release.py [OPTIONS]
 
 Options:
   --repo TEXT     The repository URL to make a release for  [required]
-  --start TEXT    The first commit hash in the release (exclusive)  [required]
+  --start TEXT    The first commit hash in the release (inclusive)  [required]
   --end TEXT      The last commit hash in the release (inclusive)  [required]
   --version TEXT  The version to make the release notes for
   --help          Show this message and exit.

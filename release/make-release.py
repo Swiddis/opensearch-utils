@@ -164,7 +164,7 @@ def make_notes(contrib_data: dict, version: str):
 @click.option(
     "--start",
     required=True,
-    help="The first commit hash in the release (exclusive)",
+    help="The first commit hash in the release (inclusive)",
     callback=validate_commit_hash,
 )
 @click.option(
