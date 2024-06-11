@@ -182,7 +182,7 @@ def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str
     client = GitHubClient(owner, repo)
 
     print(
-        f"Generating release notes for commits {base[:7]}..{head[:7]} on {owner}/{repo}",
+        f"Generating release notes for commits {base[:7]}...{head[:7]} on {owner}/{repo}",
         file=sys.stderr,
     )
 
