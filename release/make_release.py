@@ -1,3 +1,4 @@
+from collections import Counter
 import re
 import string
 import sys
@@ -189,16 +190,22 @@ def make_release(repo_parts: tuple[str, str], start: str, end: str, version: str
 
     print(f"Found {len(commits)} commits, searching for associated PRs", file=sys.stderr)
 
-    pr_nums = {get_commit_pr(commit) for commit in commits}
-    pr_nums = {pc for pc in pr_nums if pc}
+    pr_nums = [get_commit_pr(commit) for commit in commits]
+    pr_nums = [pc for pc in pr_nums if pc]
+    unique_prs = set(pr_nums)
+
     results = [
         assemble_contrib_data(pr)
-        for pr in client.fetch_merged_prs(pr_nums)
+        for pr in client.fetch_merged_prs(unique_prs)
     ]
 
     print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
-    if len(results) < len(pr_nums):
-        print(f"Unable to find PRs: {pr_nums - set(r['pull_req'] for r in results)}", file=sys.stderr)
+    if len(results) < len(unique_prs):
+        print(f"Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}", file=sys.stderr)
+    if len(unique_prs) < len(pr_nums):
+        counter = Counter(pr_nums)
+        multi_keys = set(k for k, v in counter.items() if v > 1)
+        print(f"Some PRs were referenced multiple times and deduped: {multi_keys}", file=sys.stderr)
 
     print("Generating notes", file=sys.stderr)
 
