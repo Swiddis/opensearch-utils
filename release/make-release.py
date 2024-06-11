@@ -198,7 +198,7 @@ def make_release(repo_parts: tuple[str, str], start: str, end: str, version: str
 
     print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
     if len(results) < len(pr_nums):
-        print(f"Unable to find PRs: {pr_nums - results}", file=sys.stderr)
+        print(f"Unable to find PRs: {pr_nums - set(r['pull_req'] for r in results)}", file=sys.stderr)
 
     print("Generating notes", file=sys.stderr)
 
