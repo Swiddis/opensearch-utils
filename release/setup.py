@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="make_release",
-    version="1.0.0",
+    version="1.1.0",
     author="Simeon Widdis",
     author_email="sawiddis@amazon.com",
     license="Apache-2.0",

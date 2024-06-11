@@ -13,15 +13,38 @@ but isn't typically strictly necessary.
 
 ```bash
 $ pip install .
+```
+
+Then you can run it via `make_release`.
+
+```
 $ make_release --help
 Usage: make_release [OPTIONS]
 
 Options:
-  --repo TEXT     The repository URL to make a release for  [required]
-  --start TEXT    The first commit hash in the release (inclusive)  [required]
-  --end TEXT      The last commit hash in the release (inclusive)  [required]
-  --version TEXT  The version to make the release notes for
-  --help          Show this message and exit.
+  -r, --repo TEXT     The repository URL to make a release for  [required]
+  -b, --base TEXT     The base commit. This is the starting point for the
+                      release's changes, and *is not* included in the
+                      changelog  [required]
+  -h, --head TEXT     The head commit. This is the most recent commit included
+                      in the release, and *is* included in the changelog
+                      [required]
+  -v, --version TEXT  The version to make the release notes for
+  --help              Show this message and exit.
+```
+
+The `base` commit being exclusive may be counterintuitive; it comes from the script's commit search
+being a thin wrapper around [Github's `compare` API](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/viewing-and-comparing-commits/comparing-commits#comparing-commits),
+which in turn hails from `diff` in the `git` CLI.
+
+### Example
+
+```sh
+$ make_release \
+    --repo https://github.com/opensearch-project/dashboards-observability \
+    --base 8b7966b09777980a6f7901eb6641e33785c93ae8 \
+    --head cb78382d5f47de5d72c8fa4b001ad5d49a8bdad2 \
+    --version 2.13.0 > notes.md
 ```
 
 ### Rate Limiting
@@ -37,13 +60,3 @@ $ gh auth token > TOKEN
 ```
 
 Alternatively, you can manually create a [personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
-
-### Example
-
-```sh
-$ make_release \
-    --repo https://github.com/opensearch-project/dashboards-observability \
-    --start 8b7966b09777980a6f7901eb6641e33785c93ae8 \
-    --end cb78382d5f47de5d72c8fa4b001ad5d49a8bdad2 \
-    --version 2.13.0 > notes.md
-```

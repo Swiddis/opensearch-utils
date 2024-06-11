@@ -156,37 +156,37 @@ def make_notes(contrib_data: dict, version: str):
 
 @click.command(name='make_release')
 @click.option(
-    "--repo",
+    "--repo", "-r",
     "repo_parts",
     required=True,
     help="The repository URL to make a release for",
     callback=parse_repo_url,
 )
 @click.option(
-    "--start",
+    "--base", "-b",
     required=True,
-    help="The first commit hash in the release (inclusive)",
+    help="The base commit. This is the starting point for the release's changes, and *is not* included in the changelog",
     callback=validate_commit_hash,
 )
 @click.option(
-    "--end",
+    "--head", "-h",
     required=True,
-    help="The last commit hash in the release (inclusive)",
+    help="The head commit. This is the most recent commit included in the release, and *is* included in the changelog",
     callback=validate_commit_hash,
 )
 @click.option(
-    "--version", help="The version to make the release notes for", default="[VERSION]"
+    "--version", "-v", help="The version to make the release notes for", default="[VERSION]"
 )
-def make_release(repo_parts: tuple[str, str], start: str, end: str, version: str):
+def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str):
     owner, repo = repo_parts
     client = GitHubClient(owner, repo)
 
     print(
-        f"Generating release notes for commits {start[:7]}..{end[:7]} on {owner}/{repo}",
+        f"Generating release notes for commits {base[:7]}..{head[:7]} on {owner}/{repo}",
         file=sys.stderr,
     )
 
-    commits = client.fetch_commits(start, end)
+    commits = client.fetch_commits(base, head)
 
     print(f"Found {len(commits)} commits, searching for associated PRs", file=sys.stderr)
 
