@@ -3,14 +3,18 @@
 1. Find the start and end commit hashes for the repo you want to make release notes for
 2. Generate the notes
 
-Requires Python 3.10+ for consistent results since it depends on `dict` being ordered, but should still run without errors for lower versions.
+The requirements specify Python 3.10+ since we depend on `dict` being ordered for consistent
+results, but it should still run without errors for lower versions.
 
 ## Usage
 
+Install the CLI locally with `pip`. It's good practice to do this in a [virtual environment](https://docs.python.org/3/library/venv.html),
+but isn't typically strictly necessary.
+
 ```bash
-$ pip install -r requirements.txt
-$ python3 make-release.py --help
-Usage: make-release.py [OPTIONS]
+$ pip install .
+$ make_release --help
+Usage: make_release [OPTIONS]
 
 Options:
   --repo TEXT     The repository URL to make a release for  [required]
@@ -32,13 +36,12 @@ $ gh auth login
 $ gh auth token > TOKEN
 ```
 
-Alternatively, you can manually create a [personal access
-token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+Alternatively, you can manually create a [personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
 ### Example
 
 ```sh
-$ python3 make-release.py \
+$ make_release \
     --repo https://github.com/opensearch-project/dashboards-observability \
     --start 8b7966b09777980a6f7901eb6641e33785c93ae8 \
     --end cb78382d5f47de5d72c8fa4b001ad5d49a8bdad2 \

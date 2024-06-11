@@ -1,5 +1,7 @@
-# Python virtual environment
+# Python build artifacts and environments
+build
 venv
+*.egg-info
 
 # All markdown file output (except README)
 *.md

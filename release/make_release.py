@@ -153,7 +153,7 @@ def make_notes(contrib_data: dict, version: str):
     return result[:-2]  # Remove extra trailing newlines
 
 
-@click.command()
+@click.command(name='make_release')
 @click.option(
     "--repo",
     "repo_parts",
