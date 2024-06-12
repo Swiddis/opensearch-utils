@@ -37,6 +37,11 @@ The `base` commit being exclusive may be counterintuitive; it comes from the scr
 being a thin wrapper around [Github's `compare` API](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/viewing-and-comparing-commits/comparing-commits#comparing-commits),
 which in turn hails from `diff` in the `git` CLI.
 
+The script relies on the PRs in the commit range having release labels, fully defined in the
+`LABEL_CATEGORIES` variable at the top of the file. It's currently configured for the labels we use
+in the dashboards-observability repository. For the best results it's a good idea to introduce a
+workflow that [ensures labels are set](https://github.com/opensearch-project/dashboards-observability/blob/main/.github/workflows/enforce-labels.yml).
+
 ### Example
 
 ```sh
@@ -45,7 +50,15 @@ $ make_release \
     --base 8b7966b09777980a6f7901eb6641e33785c93ae8 \
     --head cb78382d5f47de5d72c8fa4b001ad5d49a8bdad2 \
     --version 2.13.0 > notes.md
+Generating release notes for commits 8b7966b..cb78382 on opensearch-project/dashboards-observability
+Found 43 commits, searching for associated PRs
+Successfully found 43 associated PRs
+Generating notes
 ```
+
+The notes are sent to STDOUT, while progress and supplementary info is sent to STDERR. For that
+reason it's usually convenient to pipe the output into a specific markdown file. You can also pass
+the `--quiet` flag to avoid the progress output.
 
 ### Rate Limiting
 
