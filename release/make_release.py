@@ -177,18 +177,21 @@ def make_notes(contrib_data: dict, version: str):
 @click.option(
     "--version", "-v", help="The version to make the release notes for", default="[VERSION]"
 )
-def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str):
+@click.option("--quiet", help="Don't send progress output on STDERR", is_flag=True, default=False)
+def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str, quiet: bool):
     owner, repo = repo_parts
     client = GitHubClient(owner, repo)
 
-    print(
-        f"Generating release notes for commits {base[:7]}...{head[:7]} on {owner}/{repo}",
-        file=sys.stderr,
-    )
+    if not quiet:
+        print(
+            f"Generating release notes for commits {base[:7]}...{head[:7]} on {owner}/{repo}",
+            file=sys.stderr,
+        )
 
     commits = client.fetch_commits(base, head)
 
-    print(f"Found {len(commits)} commits, searching for associated PRs", file=sys.stderr)
+    if not quiet:
+        print(f"Found {len(commits)} commits, searching for associated PRs", file=sys.stderr)
 
     pr_nums = [get_commit_pr(commit) for commit in commits]
     pr_nums = [pc for pc in pr_nums if pc]
@@ -199,15 +202,15 @@ def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str
         for pr in client.fetch_merged_prs(unique_prs)
     ]
 
-    print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
-    if len(results) < len(unique_prs):
-        print(f"Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}", file=sys.stderr)
-    if len(unique_prs) < len(pr_nums):
-        counter = Counter(pr_nums)
-        multi_keys = set(k for k, v in counter.items() if v > 1)
-        print(f"Some PRs were referenced multiple times and deduped: {multi_keys}", file=sys.stderr)
-
-    print("Generating notes", file=sys.stderr)
+    if not quiet:
+        print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
+        if len(results) < len(unique_prs):
+            print(f"Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}", file=sys.stderr)
+        if len(unique_prs) < len(pr_nums):
+            counter = Counter(pr_nums)
+            multi_keys = set(k for k, v in counter.items() if v > 1)
+            print(f"Some PRs were referenced multiple times and deduped: {multi_keys}", file=sys.stderr)
+        print("Generating notes", file=sys.stderr)
 
     notes = make_notes(results, version)
     print(notes)
