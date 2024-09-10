@@ -26,6 +26,8 @@ def read_dashboard_library(source: Path):
 def traverse_fields(ast):
     if "left" in ast and "right" in ast:
         return traverse_fields(ast["left"]) + traverse_fields(ast["right"])
+    elif "expr" in ast:
+        return traverse_fields(ast["expr"])
     elif "field" in ast:
         return [ast["field"]]
     else:
@@ -62,7 +64,7 @@ def field_filter_search(search, fields):
     safety = (
         "~> Fields are safe"
         if all(has_field in fields for has_field in has_fields)
-        else "~> Filtered out"
+        else "~> Filtered out due to: " + ', '.join(h for h in has_fields if h not in fields)
     )
     print("Search fields:", has_fields, safety, file=sys.stderr)
     return all(has_field in fields for has_field in has_fields)
@@ -86,7 +88,7 @@ def field_filter_visualization(visualization, fields):
     safety = (
         "~> Fields are safe"
         if all(has_field in fields for has_field in has_fields)
-        else "~> Filtered out"
+        else "~> Filtered out due to: " + ', '.join(h for h in has_fields if h not in fields)
     )
     print("Vis fields:", has_fields, safety, file=sys.stderr)
     return all(has_field in fields for has_field in has_fields)
