@@ -66,6 +66,8 @@ def field_filter_search(search, fields):
         if all(has_field in fields for has_field in has_fields)
         else "~> Filtered out due to: " + ', '.join(h for h in has_fields if h not in fields)
     )
+    if "are safe" in safety:
+        return True
     print("Search fields:", has_fields, safety, file=sys.stderr)
     return all(has_field in fields for has_field in has_fields)
 
@@ -90,6 +92,8 @@ def field_filter_visualization(visualization, fields):
         if all(has_field in fields for has_field in has_fields)
         else "~> Filtered out due to: " + ', '.join(h for h in has_fields if h not in fields)
     )
+    if "are safe" in safety:
+        return True
     print("Vis fields:", has_fields, safety, file=sys.stderr)
     return all(has_field in fields for has_field in has_fields)
 
@@ -113,7 +117,7 @@ if __name__ == "__main__":
 
     # TODO make this an arg
     try:
-        with open("data/fields.txt", "r") as key_file:
+        with open("data/waf_fields.txt", "r") as key_file:
             key_set = set(key_file.read().splitlines())
     except FileNotFoundError:
         key_set = MockAlwaysContains()
@@ -123,3 +127,17 @@ if __name__ == "__main__":
             dashlib[item_type] = list(
                 filter(lambda i: filters[item_type](i, key_set), items)
             )
+    
+    ids = set(asset['id'] for assets in dashlib.values() for asset in assets if 'id' in asset)
+    
+    with open('output.ndjson', 'w') as outfile: 
+        for assets in dashlib.values():
+            for asset in assets:
+                if asset.get('type', None) == 'dashboard':
+                    names = [r['name'] for r in asset['references'] if r['id'] not in ids]
+                    asset["references"] = list(filter(lambda r: r['id'] in ids, asset['references']))
+                    panels = json.loads(asset['attributes']['panelsJSON'])
+                    panels = list(filter(lambda p: p['panelRefName'] not in names, panels))
+                    asset['attributes']['panelsJSON'] = json.dumps(panels)
+
+                outfile.write(json.dumps(asset) + "\n")
