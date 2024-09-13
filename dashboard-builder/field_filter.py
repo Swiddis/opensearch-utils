@@ -66,9 +66,7 @@ def field_filter_search(search, fields):
         if all(has_field in fields for has_field in has_fields)
         else "~> Filtered out due to: " + ', '.join(h for h in has_fields if h not in fields)
     )
-    if "are safe" in safety:
-        return True
-    print("Search fields:", has_fields, safety, file=sys.stderr)
+    print(f"{search['attributes']['title']} | Search fields:", has_fields, safety, file=sys.stderr)
     return all(has_field in fields for has_field in has_fields)
 
 
@@ -92,9 +90,7 @@ def field_filter_visualization(visualization, fields):
         if all(has_field in fields for has_field in has_fields)
         else "~> Filtered out due to: " + ', '.join(h for h in has_fields if h not in fields)
     )
-    if "are safe" in safety:
-        return True
-    print("Vis fields:", has_fields, safety, file=sys.stderr)
+    print(f"{visualization['attributes']['title']} | Vis fields:", has_fields, safety, file=sys.stderr)
     return all(has_field in fields for has_field in has_fields)
 
 
@@ -108,6 +104,10 @@ if __name__ == "__main__":
     elif not sys.argv[1].endswith(".ndjson"):
         print("WARN: Filename should be .ndjson", file=sys.stderr)
     source = sys.argv[1]
+    if len(sys.argv) == 3:
+        field_file = sys.argv[2]
+    else:
+        field_file = "data/fields.txt"
 
     dashlib = read_dashboard_library(source)
     filters = {
@@ -115,9 +115,8 @@ if __name__ == "__main__":
         "visualization": field_filter_visualization,
     }
 
-    # TODO make this an arg
     try:
-        with open("data/waf_fields.txt", "r") as key_file:
+        with open(field_file, "r") as key_file:
             key_set = set(key_file.read().splitlines())
     except FileNotFoundError:
         key_set = MockAlwaysContains()
