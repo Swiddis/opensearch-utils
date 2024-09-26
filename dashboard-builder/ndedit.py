@@ -116,7 +116,7 @@ class FileChangeHandler(FileSystemEventHandler):
     def __init__(self, buffer, source):
         self._buffer = buffer
         self._source = source
-        self._expect_update = buffer # Detect initial load
+        self._expect_update = None
 
     def on_modified(
         self, event: typing.Union[DirModifiedEvent, FileModifiedEvent]
