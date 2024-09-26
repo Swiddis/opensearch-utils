@@ -40,4 +40,9 @@ Now you can read exactly what data is in your exported saved objects, and edit i
 script watches the file for changes, and writes them back to the original file. This makes hacking
 seamless.
 
+```sh
+$ pip install -r requirements.txt
+$ python3 ndedit.py <file>.ndjson
+```
+
 ![Image showing NDEdit in action](images/image-1.png)
