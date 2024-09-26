@@ -21,8 +21,11 @@ because of the NDJson formatting making it hard to read what's going on. Even if
 to a new file to format them, they also do this thing where the nested values are sometimes
 string-encoded JSON objects.
 
-![Screenshot of an NDJSON line in an editor](images/image.png)
-> Not pictured: line 3 is 16000 columns long.
+<p align="center">
+    <img src="images/image.png" width="400px" />
+    <br>
+    <i>Not pictured: line 3 is 16000 columns long</i>
+</p>
 
 The normal way to update these saved objects is using the UI to edit these objects safely, but this also doesn't always work:
 - Bulk updating fields is hard, if you just want to rename a bunch of things (e.g. refactoring dashboards to use a new timestamp field)
