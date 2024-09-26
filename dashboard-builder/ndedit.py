@@ -22,7 +22,7 @@ def encodes_json_object(content: str) -> bool:
         return False
 
 
-def memkey(path):
+def memkey(path: list) -> str:
     path = [xxhash.xxh32_hexdigest(path[0]), *path[1:]]
     return ".".join(path)
 
@@ -52,7 +52,7 @@ def simplify_with_memory(record: typing.Any, memory: dict, path=None) -> dict:
     return record
 
 
-def create_buffer_content(ndjson_content: list[str]):
+def create_buffer_content(ndjson_content: list[str]) -> tuple[list, dict]:
     data, memory = [], {}
     for i, line in enumerate(ndjson_content):
         record = json.loads(line)
@@ -73,7 +73,7 @@ def create_buffers(source: str):
         json.dump(data, bufferfile, indent=2)
 
 
-def flatten_buffer_entry(record: typing.Any, memory: dict, path=None):
+def flatten_buffer_entry(record: typing.Any, memory: dict, path=None) -> typing.Any:
     if path is None:
         path = [record["id"] if "id" in record else json.dumps(record)]
     if not isinstance(record, dict) and not isinstance(record, list):
