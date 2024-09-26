@@ -3,17 +3,6 @@
 WIP work on a script to automatically assemble dashboards from field info. In the mean time here's a
 few more incremental scripts:
 
-## Field Filter
-
-A helper script to get field names out of an ndjson bundle.
-
-Usage:
-
-```sh
-$ pip install -r requirements.txt
-$ python3 field_filter.py <ndjson file>
-```
-
 ## NDEdit
 
 A helper for editing OSD saved object NDjson files directly. Editing these files by hand is tricky
@@ -46,3 +35,17 @@ $ python3 ndedit.py <file>.ndjson
 ```
 
 ![Image showing NDEdit in action](images/image-1.png)
+
+## Field Filter
+
+A helper script to get field names out of an ndjson bundle and validate that Dashboard Panels are
+compatible with a given data schema. Saves a *lot* of time if you're trying to port a dashboard or
+two from another data format to your own. Some assembly is likely required for your use case, as I
+was lazy and made changing behavior require code edits instead of CLI flags (longstanding todo...).
+
+Usage:
+
+```sh
+$ pip install -r requirements.txt
+$ python3 field_filter.py <ndjson file> <field file>
+```
