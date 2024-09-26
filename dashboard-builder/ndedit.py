@@ -115,8 +115,8 @@ def regenerate_source(buffer: str, source: str):
 class FileChangeHandler(FileSystemEventHandler):
     def __init__(self, buffer, source):
         self._buffer = buffer
-        self._source = source.replace('.ndjson', '.new.ndjson')
-        self._expect_update = None
+        self._source = source
+        self._expect_update = buffer # Detect initial load
 
     def on_modified(
         self, event: typing.Union[DirModifiedEvent, FileModifiedEvent]
@@ -129,7 +129,7 @@ class FileChangeHandler(FileSystemEventHandler):
             return
         to_refresh = self._source if src_path == self._buffer else self._buffer
 
-        print("->", src_path, "modified; refreshing", to_refresh)
+        print("Update:", src_path, "->", to_refresh)
         if src_path == self._source:
             create_buffers(src_path)
             self._expect_update = self._buffer
@@ -144,6 +144,11 @@ if __name__ == "__main__":
         sys.exit(1)
 
     source = sys.argv[1]
+    with open(source, 'r') as f:
+        with open(source + '.bk', 'w') as fbk:
+            fbk.write(f.read())
+    print("Backed up source to", source + '.bk')
+
     create_buffers(source)
     print("Created buffer file in ndedit_data")
 
