@@ -1,8 +1,6 @@
-version: '3'
-
 services:
   opensearch:
-    image: opensearchstaging/opensearch:3.0.0
+    image: opensearchstaging/opensearch:3.1.0
     container_name: opensearch
     environment:
       - cluster.name=opensearch-cluster
@@ -12,7 +10,8 @@ services:
       - bootstrap.memory_lock=true
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
       - "plugins.security.disabled=true"
-      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=testPassword123!!"
+      # We disabled the security plugin, but OS won't bootstrap if this isn't set ¯\_(ツ)_/¯
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=CjTMjH8L50k6T5I#53jpI$AkVnxpGmHm"
     ulimits:
       memlock:
         soft: -1
@@ -20,15 +19,16 @@ services:
       nofile:
         soft: 65536 # Maximum number of open files for the opensearch user - set to at least 65536
         hard: 65536
-    volumes:
-      - opensearch:/usr/share/opensearch/data # Creates volume called opensearch-data1 and mounts it to the container
+    # Uncomment to persist data across runs
+    # volumes:
+    #   - opensearch:/usr/share/opensearch/data
     ports:
       - 9200:9200
       - 9600:9600
     expose:
       - "9200"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health?wait_for_status=yellow", "-u", "admin:testPassword123!!"]
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health?wait_for_status=yellow"]
       interval: 20s
       timeout: 10s
       retries: 3
@@ -36,7 +36,7 @@ services:
       - opensearch-net
   dashboards:
     container_name: dashboards
-    image: opensearchstaging/opensearch-dashboards:3.0.0
+    image: opensearchstaging/opensearch-dashboards:3.1.0
     ports:
       - "5601:5601"
     expose:
