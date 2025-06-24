@@ -16,6 +16,7 @@ LABEL_CATEGORIES = {
     "documentation": "Documentation",
     "maintenance": "Maintenance",
     "unknown": "UNKNOWN (Needs Manual Categorization)",
+    "skip-changelog": None,
 }
 
 
@@ -138,8 +139,10 @@ def make_notes(contrib_data: dict, version: str):
         f"Compatible with OpenSearch and OpenSearch Dashboards version {version}\n\n"
     )
     for lcat, title in LABEL_CATEGORIES.items():
-        if len(categories[lcat]) == 0:
+        if len(categories[lcat]) == 0 or lcat == "skip-changelog":
             continue
+        if lcat == "breaking":
+            print("\033[33mWARNING: there are breaking changes. These can only occur in major releases.\033[0m", file=sys.stderr)
         result += f"### {title}\n"
         for pull_req in sorted(
             categories[lcat], key=lambda p: int(p["pull_req"]), reverse=True
