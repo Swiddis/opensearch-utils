@@ -143,7 +143,7 @@ def make_notes(contrib_data: dict, version: str):
         if len(categories[lcat]) == 0 or lcat == "skip-changelog":
             continue
         if lcat == "breaking":
-            cprint("WARNING: there are breaking changes. These can only occur in major releases.", "yellow", file=sys.stderr)
+            cprint("WARN: there are breaking changes. These can only occur in major releases.", "yellow", file=sys.stderr)
         result += f"### {title}\n"
         for pull_req in sorted(
             categories[lcat], key=lambda p: int(p["pull_req"]), reverse=True
@@ -209,7 +209,7 @@ def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str
     if not quiet:
         print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
         if len(results) < len(unique_prs):
-            print(f"Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}", file=sys.stderr)
+            cprint(f"WARN: Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}", "yellow", file=sys.stderr)
         if len(unique_prs) < len(pr_nums):
             counter = Counter(pr_nums)
             multi_keys = set(k for k, v in counter.items() if v > 1)
