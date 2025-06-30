@@ -2,6 +2,7 @@
 build
 venv
 *.egg-info
+__pycache__
 
 # All markdown file output (except README)
 *.md

@@ -5,6 +5,7 @@ import sys
 
 import click
 import requests
+from termcolor import cprint
 
 
 MIN_HASH_LENGTH = 7
@@ -142,7 +143,7 @@ def make_notes(contrib_data: dict, version: str):
         if len(categories[lcat]) == 0 or lcat == "skip-changelog":
             continue
         if lcat == "breaking":
-            print("\033[33mWARNING: there are breaking changes. These can only occur in major releases.\033[0m", file=sys.stderr)
+            cprint("WARNING: there are breaking changes. These can only occur in major releases.", "yellow", file=sys.stderr)
         result += f"### {title}\n"
         for pull_req in sorted(
             categories[lcat], key=lambda p: int(p["pull_req"]), reverse=True
