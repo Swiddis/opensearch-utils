@@ -20,18 +20,11 @@ I was working with OpenSearch logs that look like this:
 [2025-06-20T09:00:04,004][INFO ][o.o.n.c.logger           ] [node2] GET /_cat/master - 200 OK 119 0
 ```
 
-## Building
+## Installing
 
-With [Rust's Cargo installed](https://www.rust-lang.org/tools/install), create the project:
-
-```sh
-$ cargo init slog
-```
-
-Copy the contents of the `main.rs` and `Cargo.toml` files, then install it.
+With [Rust's Cargo installed](https://www.rust-lang.org/tools/install), just install:
 
 ```sh
-$ cd slog
 $ cargo install --path .
 ```
 
