@@ -1,0 +1,9 @@
+[package]
+edition = "2024"
+name = "slog"
+version = "0.2.0"
+
+[dependencies]
+colored = "3.0.0"
+glob = "0.3.2"
+itertools = "0.14.0"
