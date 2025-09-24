@@ -15,4 +15,4 @@ Tweak the constants to your liking and then run it:
 $ cargo run --release -- [lines_to_load]
 ```
 
-![Photo of it in action](image.png)
+![Photo of it in action](media/image.png)
