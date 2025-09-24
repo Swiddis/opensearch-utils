@@ -115,7 +115,6 @@ async fn process_file(
         }
     }
     progress.lines.finish();
-    progress.submitted.finish();
 
     // Handle remaining documents
     if !current_batch.is_empty() {
@@ -131,6 +130,7 @@ async fn process_file(
     while !pending_handles.is_empty() {
         progress.submitted.dec(remove_completed(&mut pending_handles).await as u64);
     }
+    progress.submitted.finish();
     progress.in_flight.finish();
     progress.completed.finish();
 
