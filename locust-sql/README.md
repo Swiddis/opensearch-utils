@@ -8,5 +8,5 @@ Set up the `uv` environment, then run `locust` against your cluster:
 
 ```sh
 $ uv sync
-$ uv run locust --host http://localhost:9200/
+$ .venv/bin/locust --host=http://localhost:9200/
 ```
