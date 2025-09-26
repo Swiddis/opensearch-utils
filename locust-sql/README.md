@@ -4,9 +4,9 @@ Quick set of files for load-testing OpenSearch PPL. For best results, make sure 
 
 ## Usage
 
-Set up the `uv` environment, then run `locust`:
+Set up the `uv` environment, then run `locust` against your cluster:
 
 ```sh
 $ uv sync
-$ uv run locust
+$ uv run locust --host http://localhost:9200/
 ```
