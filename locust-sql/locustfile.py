@@ -22,6 +22,18 @@ class OpenSearchPPLUser(HttpUser):
                     query_name = ppl_file.stem
                     OpenSearchPPLUser.queries[query_name] = query
 
+        settings = self.client.get("/_cluster/settings", catch_response=True).json()
+        if (
+            settings.get("transient", {})
+            .get("plugins", {})
+            .get("calcite", {})
+            .get("enabled", "false")
+            != "true"
+        ):
+            raise AssertionError(
+                "Calcite plugin is not enabled in the cluster settings"
+            )
+
     wait_time = between(1, 3)
 
     @task
