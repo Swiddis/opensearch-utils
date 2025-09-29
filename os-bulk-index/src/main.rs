@@ -10,8 +10,8 @@ use zstd::Decoder;
 const DATASET: &str = "datasets/documents-60.json.zst";
 const INDEX: &str = "big5";
 const BATCH_SIZE: usize = 8196;
-const CONCURRENT_REQUESTS: usize = 64;
-const MAX_PENDING_BATCHES: usize = 128;
+const CONCURRENT_REQUESTS: usize = 32;
+const MAX_PENDING_BATCHES: usize = 64;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -100,17 +100,17 @@ async fn process_file(
 
         if current_batch.len() >= BATCH_SIZE {
             let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(BATCH_SIZE));
+            progress.submitted.inc(1);
             pending_handles.push(spawn_upload_task(
                 batch,
                 Arc::clone(&semaphore),
                 client.clone(),
                 progress.clone(),
             ));
-            progress.submitted.inc(1);
 
             // When we hit our limit, start going through the queue
-            if pending_handles.len() >= MAX_PENDING_BATCHES {
-                progress.submitted.dec(remove_completed(&mut pending_handles).await as u64);
+            while pending_handles.len() >= MAX_PENDING_BATCHES {
+                remove_completed(&mut pending_handles).await;
             }
         }
     }
@@ -128,7 +128,7 @@ async fn process_file(
 
     // Wait for all remaining tasks to complete
     while !pending_handles.is_empty() {
-        progress.submitted.dec(remove_completed(&mut pending_handles).await as u64);
+        remove_completed(&mut pending_handles).await;
     }
     progress.submitted.finish_with_message("Done");
     progress.in_flight.finish_with_message("Done");
@@ -199,6 +199,7 @@ fn spawn_upload_task(
             .context("Request failed")?;
 
         progress.in_flight.dec(1);
+        progress.submitted.dec(1);
         progress.completed.inc(1);
         Ok(())
     })
