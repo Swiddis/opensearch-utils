@@ -118,6 +118,7 @@ async fn process_file(
 
     // Handle remaining documents
     if !current_batch.is_empty() {
+        progress.submitted.inc(1);
         pending_handles.push(spawn_upload_task(
             current_batch,
             Arc::clone(&semaphore),
