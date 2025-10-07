@@ -9,7 +9,7 @@ use zstd::Decoder;
 
 const DATASET: &str = "datasets/documents-60.json.zst";
 const INDEX: &str = "big5";
-const BATCH_SIZE: usize = 8196;
+const BATCH_SIZE: usize = 8192;
 const CONCURRENT_REQUESTS: usize = 32;
 const MAX_PENDING_BATCHES: usize = 64;
 
@@ -110,7 +110,7 @@ async fn process_file(
 
             // When we hit our limit, start going through the queue
             while pending_handles.len() >= MAX_PENDING_BATCHES {
-                remove_completed(&mut pending_handles).await;
+                remove_completed(&mut pending_handles).await?;
             }
         }
     }
@@ -129,7 +129,7 @@ async fn process_file(
 
     // Wait for all remaining tasks to complete
     while !pending_handles.is_empty() {
-        remove_completed(&mut pending_handles).await;
+        remove_completed(&mut pending_handles).await?;
     }
     progress.submitted.finish_with_message("Done");
     progress.in_flight.finish_with_message("Done");
@@ -140,22 +140,17 @@ async fn process_file(
 
 async fn remove_completed(
     handles: &mut Vec<tokio::task::JoinHandle<Result<()>>>,
-) -> usize {
+) -> Result<usize> {
     if handles.is_empty() {
-        return 0;
+        return Ok(0);
     }
 
-    // First just check if we've got any finished tasks
-    let init_len = handles.len();
-    handles.retain(|handle| !handle.is_finished());
-    if init_len - handles.len() > 0 {
-        return init_len - handles.len();
-    }
-
-    // Otherwise, wait for one
-    let (_, idx, _) = futures::future::select_all(handles.iter_mut()).await;
+    let (completed, idx, _) = futures::future::select_all(handles.iter_mut()).await;
+    completed
+        .context("Task panicked")?
+        .context("Upload task failed")?;
     handles.remove(idx);
-    1
+    Ok(1)
 }
 
 fn create_reader() -> Result<BufReader<Decoder<'static, BufReader<std::fs::File>>>> {
