@@ -8,14 +8,24 @@ results, but it should still run without errors for lower versions.
 
 ## Usage
 
-Install the CLI locally with `pip`. It's good practice to do this in a [virtual environment](https://docs.python.org/3/library/venv.html),
-but isn't typically strictly necessary.
+Install with uv. You have a few options:
 
+**Option 1: Install as a tool (recommended)**
 ```bash
-$ pip install .
+$ uv tool install .
 ```
 
-Then you can run it via `make_release`.
+**Option 2: Install into your current environment**
+```bash
+$ uv pip install .
+```
+
+**Option 3: Run directly without installation**
+```bash
+$ uv run --with . make_release --help
+```
+
+After installation with option 1, `make_release` will be available globally. After option 2, you can run it via `make_release` if your virtual environment is activated, or use `.venv/bin/make_release`:
 
 ```
 $ make_release --help
