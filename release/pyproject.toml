@@ -1,0 +1,15 @@
+[project]
+name = "release"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "certifi==2025.6.15",
+    "charset-normalizer==3.4.2",
+    "click==8.1.7",
+    "idna==3.10",
+    "requests==2.31.0",
+    "termcolor==3.1.0",
+    "urllib3==2.5.0",
+]
