@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+clap = { version = "4.5.53", features = ["derive"] }
+flate2 = "1.1.5"
 futures = "0.3.31"
 hex = "0.4.3"
 indicatif = "0.18.0"

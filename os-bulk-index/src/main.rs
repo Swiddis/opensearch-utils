@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use clap::Parser;
+use flate2::read::GzDecoder;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -7,30 +9,50 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use zstd::Decoder;
 
-const DATASET: &str = "datasets/documents-60.json.zst";
-const INDEX: &str = "big5";
 const BATCH_SIZE: usize = 8192;
 const CONCURRENT_REQUESTS: usize = 32;
 const MAX_PENDING_BATCHES: usize = 64;
 
+#[derive(Parser, Debug)]
+#[command(name = "os-bulk-index")]
+#[command(about = "Bulk index documents into OpenSearch/Elasticsearch")]
+struct Cli {
+    /// Path to the dataset file (supports .json, .json.gz, .json.zst)
+    #[arg(short, long)]
+    file: String,
+
+    /// Target index name
+    #[arg(short, long)]
+    index: String,
+
+    /// OpenSearch/Elasticsearch endpoint URL
+    #[arg(short, long, default_value = "http://localhost:9200")]
+    endpoint: String,
+
+    /// Username for HTTP basic authentication
+    #[arg(short, long)]
+    username: Option<String>,
+
+    /// Password for HTTP basic authentication
+    #[arg(short, long)]
+    password: Option<String>,
+
+    /// Maximum number of lines to read (optional, reads all if not specified)
+    #[arg(short, long)]
+    limit: Option<usize>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let lines_to_read = parse_args()?;
-    let progress = setup_progress_bars(lines_to_read);
+    let args = Cli::parse();
+
+    let progress = setup_progress_bars(args.limit);
     let client = Client::new();
     let semaphore = Arc::new(Semaphore::new(CONCURRENT_REQUESTS));
 
-    process_file(lines_to_read, progress.clone(), client, semaphore)
+    process_file(&args, progress.clone(), client, semaphore)
         .await
         .context("Failed to process file")
-}
-
-fn parse_args() -> Result<Option<usize>> {
-    std::env::args()
-        .nth(1)
-        .map(|s| s.parse())
-        .transpose()
-        .context("Failed to parse argument")
 }
 
 struct ProgressBars {
@@ -84,16 +106,16 @@ fn setup_progress_bars(lines_to_read: Option<usize>) -> ProgressBars {
 }
 
 async fn process_file(
-    lines_to_read: Option<usize>,
+    args: &Cli,
     progress: ProgressBars,
     client: Client,
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
-    let reader = create_reader()?;
+    let reader = create_reader(&args.file)?;
     let mut current_batch = Vec::with_capacity(BATCH_SIZE);
     let mut pending_handles = Vec::new();
 
-    for line in reader.lines().take(lines_to_read.unwrap_or(usize::MAX)) {
+    for line in reader.lines().take(args.limit.unwrap_or(usize::MAX)) {
         let line = line.context("Failed to read line")?;
         current_batch.push(line);
         progress.lines.inc(1);
@@ -106,6 +128,10 @@ async fn process_file(
                 Arc::clone(&semaphore),
                 client.clone(),
                 progress.clone(),
+                &args.endpoint,
+                &args.index,
+                args.username.as_deref(),
+                args.password.as_deref(),
             ));
 
             // When we hit our limit, start going through the queue
@@ -124,6 +150,10 @@ async fn process_file(
             Arc::clone(&semaphore),
             client.clone(),
             progress.clone(),
+            &args.endpoint,
+            &args.index,
+            args.username.as_deref(),
+            args.password.as_deref(),
         ));
     }
 
@@ -153,19 +183,43 @@ async fn remove_completed(
     Ok(1)
 }
 
-fn create_reader() -> Result<BufReader<Decoder<'static, BufReader<std::fs::File>>>> {
-    let file = std::fs::File::open(DATASET).context("Failed to open file")?;
-    let decoder = Decoder::new(file).context("Failed to create decoder")?;
-    Ok(BufReader::new(decoder))
+enum FileReader {
+    Plain(BufReader<std::fs::File>),
+    Gzip(BufReader<GzDecoder<std::fs::File>>),
+    Zstd(BufReader<Decoder<'static, BufReader<std::fs::File>>>),
 }
 
-fn create_bulk_body(chunk: &[String]) -> String {
+impl FileReader {
+    fn lines(self) -> Box<dyn Iterator<Item = std::io::Result<String>>> {
+        match self {
+            FileReader::Plain(reader) => Box::new(reader.lines()),
+            FileReader::Gzip(reader) => Box::new(reader.lines()),
+            FileReader::Zstd(reader) => Box::new(reader.lines()),
+        }
+    }
+}
+
+fn create_reader(path: &str) -> Result<FileReader> {
+    let file = std::fs::File::open(path).context("Failed to open file")?;
+
+    if path.ends_with(".zst") {
+        let decoder = Decoder::new(file).context("Failed to create zstd decoder")?;
+        Ok(FileReader::Zstd(BufReader::new(decoder)))
+    } else if path.ends_with(".gz") {
+        let decoder = GzDecoder::new(file);
+        Ok(FileReader::Gzip(BufReader::new(decoder)))
+    } else {
+        Ok(FileReader::Plain(BufReader::new(file)))
+    }
+}
+
+fn create_bulk_body(chunk: &[String], index: &str) -> String {
     let mut bulk_body = String::new();
     for line in chunk {
         let id = hex::encode(&Sha256::digest(line.as_bytes())[..12]);
         bulk_body.push_str(&format!(
             "{{\"create\":{{\"_index\":\"{}\",\"_id\":\"{}\"}}}}\n",
-            INDEX, id
+            index, id
         ));
         bulk_body.push_str(line);
         bulk_body.push('\n');
@@ -178,16 +232,33 @@ fn spawn_upload_task(
     semaphore: Arc<Semaphore>,
     client: Client,
     progress: ProgressBars,
+    endpoint: &str,
+    index: &str,
+    username: Option<&str>,
+    password: Option<&str>,
 ) -> tokio::task::JoinHandle<Result<()>> {
+    let bulk_url = format!("{}/_bulk", endpoint);
+    let index = index.to_string();
+    let username = username.map(|s| s.to_string());
+    let password = password.map(|s| s.to_string());
+
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await?;
-        let bulk_body = create_bulk_body(&chunk);
+        let bulk_body = create_bulk_body(&chunk, &index);
 
+        progress.submitted.dec(1);
         progress.in_flight.inc(1);
-        client
-            .post("http://localhost:9200/_bulk")
+
+        let mut request = client
+            .post(&bulk_url)
             .header("Content-Type", "application/x-ndjson")
-            .body(bulk_body)
+            .body(bulk_body);
+
+        if let (Some(user), Some(pass)) = (username, password) {
+            request = request.basic_auth(user, Some(pass));
+        }
+
+        request
             .send()
             .await
             .context("Failed to send request")?
@@ -195,7 +266,6 @@ fn spawn_upload_task(
             .context("Request failed")?;
 
         progress.in_flight.dec(1);
-        progress.submitted.dec(1);
         progress.completed.inc(1);
         Ok(())
     })
