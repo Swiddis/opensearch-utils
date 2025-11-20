@@ -1,6 +1,8 @@
 # OpenSearch Bulk Indexer
 
-Utility for indexing files in OpenSearch as fast as possible.
+![Photo of it in action](media/image.png)
+
+Utility CLI for indexing files in OpenSearch as fast as possible.
 
 Currently configured to load the big5 dataset from OpenSearch Benchmark.
 Requires a newline-delimited JSON file with ZST compression.
@@ -35,5 +37,3 @@ Options:
   -l, --limit <LIMIT>        Maximum number of lines to read (optional, reads all if not specified)
   -h, --help                 Print help
 ```
-
-![Photo of it in action](media/image.png)
