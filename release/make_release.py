@@ -19,6 +19,9 @@ LABEL_CATEGORIES = {
     "unknown": "UNKNOWN (Needs Manual Categorization)",
     "skip-changelog": None,
 }
+LABEL_ALIASES = {
+    "bugfix": "bug",
+}
 
 
 class GitHubClient:
@@ -108,7 +111,8 @@ def get_commit_pr(commit) -> str | None:
 
 
 def extract_category(labels):
-    labels = [label["name"] for label in labels]
+    labels = [label["name"].lower() for label in labels]
+    labels = [LABEL_ALIASES.get(label, label) for label in labels]
     for category in LABEL_CATEGORIES:
         if category in labels:
             return category
