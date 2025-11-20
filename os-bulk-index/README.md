@@ -41,7 +41,7 @@ Options:
   -c, --concurrent-requests <CONCURRENT_REQUESTS>
           Maximum number of concurrent requests [default: 32]
       --max-pending-batches <MAX_PENDING_BATCHES>
-          Maximum number of batches to queue while waiting for requests to complete [default: 64]
+          Maximum number of in-progress batches to concurrently keep in memory [default: 64]
   -h, --help
           Print help
 ```

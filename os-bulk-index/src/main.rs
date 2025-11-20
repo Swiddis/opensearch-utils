@@ -6,7 +6,7 @@ use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{mpsc, Semaphore};
 use zstd::Decoder;
 
 #[derive(Parser, Debug)]
@@ -45,9 +45,18 @@ struct Cli {
     #[arg(short, long, default_value_t = 32)]
     concurrent_requests: usize,
 
-    /// Maximum number of batches to queue while waiting for requests to complete
+    /// Maximum number of in-progress batches to concurrently keep in memory
     #[arg(long, default_value_t = 64)]
     max_pending_batches: usize,
+}
+
+#[derive(Debug)]
+enum ProgressEvent {
+    LineRead,
+    BatchSubmitted,
+    BatchStarted,
+    BatchCompleted,
+    Finished,
 }
 
 #[tokio::main]
@@ -57,30 +66,20 @@ async fn main() -> Result<()> {
     let progress = setup_progress_bars(args.limit);
     let client = Client::new();
     let semaphore = Arc::new(Semaphore::new(args.concurrent_requests));
+    let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-    process_file(&args, progress.clone(), client, semaphore)
-        .await
-        .context("Failed to process file")
+    let progress_handle = tokio::spawn(handle_progress_events(progress, progress_rx));
+    let result = process_file(&args, progress_tx, client, semaphore).await;
+
+    progress_handle.await.context("Progress task panicked")??;
+    result.context("Failed to process file")
 }
 
 struct ProgressBars {
-    multi: MultiProgress,
     lines: ProgressBar,
     submitted: ProgressBar,
     in_flight: ProgressBar,
     completed: ProgressBar,
-}
-
-impl Clone for ProgressBars {
-    fn clone(&self) -> Self {
-        Self {
-            multi: self.multi.clone(),
-            lines: self.lines.clone(),
-            submitted: self.submitted.clone(),
-            in_flight: self.in_flight.clone(),
-            completed: self.completed.clone(),
-        }
-    }
 }
 
 fn setup_progress_bars(lines_to_read: Option<usize>) -> ProgressBars {
@@ -105,7 +104,6 @@ fn setup_progress_bars(lines_to_read: Option<usize>) -> ProgressBars {
     completed.set_prefix("Batches completed");
 
     ProgressBars {
-        multi,
         lines,
         submitted,
         in_flight,
@@ -113,9 +111,37 @@ fn setup_progress_bars(lines_to_read: Option<usize>) -> ProgressBars {
     }
 }
 
+async fn handle_progress_events(
+    progress: ProgressBars,
+    mut rx: mpsc::UnboundedReceiver<ProgressEvent>,
+) -> Result<()> {
+    while let Some(event) = rx.recv().await {
+        match event {
+            ProgressEvent::LineRead => progress.lines.inc(1),
+            ProgressEvent::BatchSubmitted => progress.submitted.inc(1),
+            ProgressEvent::BatchStarted => {
+                progress.submitted.dec(1);
+                progress.in_flight.inc(1);
+            }
+            ProgressEvent::BatchCompleted => {
+                progress.in_flight.dec(1);
+                progress.completed.inc(1);
+            }
+            ProgressEvent::Finished => break,
+        }
+    }
+
+    progress.lines.finish_with_message("Done");
+    progress.submitted.finish_with_message("Done");
+    progress.in_flight.finish_with_message("Done");
+    progress.completed.finish_with_message("Done");
+
+    Ok(())
+}
+
 async fn process_file(
     args: &Cli,
-    progress: ProgressBars,
+    progress_tx: mpsc::UnboundedSender<ProgressEvent>,
     client: Client,
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
@@ -126,16 +152,16 @@ async fn process_file(
     for line in reader.lines().take(args.limit.unwrap_or(usize::MAX)) {
         let line = line.context("Failed to read line")?;
         current_batch.push(line);
-        progress.lines.inc(1);
+        let _ = progress_tx.send(ProgressEvent::LineRead);
 
         if current_batch.len() >= args.batch_size {
             let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(args.batch_size));
-            progress.submitted.inc(1);
+            let _ = progress_tx.send(ProgressEvent::BatchSubmitted);
             pending_handles.push(spawn_upload_task(
                 batch,
                 Arc::clone(&semaphore),
                 client.clone(),
-                progress.clone(),
+                progress_tx.clone(),
                 &args.endpoint,
                 &args.index,
                 args.username.as_deref(),
@@ -148,16 +174,15 @@ async fn process_file(
             }
         }
     }
-    progress.lines.finish_with_message("Done");
 
     // Handle remaining documents
     if !current_batch.is_empty() {
-        progress.submitted.inc(1);
+        let _ = progress_tx.send(ProgressEvent::BatchSubmitted);
         pending_handles.push(spawn_upload_task(
             current_batch,
             Arc::clone(&semaphore),
             client.clone(),
-            progress.clone(),
+            progress_tx.clone(),
             &args.endpoint,
             &args.index,
             args.username.as_deref(),
@@ -165,13 +190,12 @@ async fn process_file(
         ));
     }
 
-    // Wait for all remaining tasks to complete
+    // Leftover tasks
     while !pending_handles.is_empty() {
         remove_completed(&mut pending_handles).await?;
     }
-    progress.submitted.finish_with_message("Done");
-    progress.in_flight.finish_with_message("Done");
-    progress.completed.finish_with_message("Done");
+
+    let _ = progress_tx.send(ProgressEvent::Finished);
 
     Ok(())
 }
@@ -239,7 +263,7 @@ fn spawn_upload_task(
     chunk: Vec<String>,
     semaphore: Arc<Semaphore>,
     client: Client,
-    progress: ProgressBars,
+    progress_tx: mpsc::UnboundedSender<ProgressEvent>,
     endpoint: &str,
     index: &str,
     username: Option<&str>,
@@ -254,8 +278,7 @@ fn spawn_upload_task(
         let _permit = semaphore.acquire().await?;
         let bulk_body = create_bulk_body(&chunk, &index);
 
-        progress.submitted.dec(1);
-        progress.in_flight.inc(1);
+        let _ = progress_tx.send(ProgressEvent::BatchStarted);
 
         let mut request = client
             .post(&bulk_url)
@@ -273,8 +296,7 @@ fn spawn_upload_task(
             .error_for_status()
             .context("Request failed")?;
 
-        progress.in_flight.dec(1);
-        progress.completed.inc(1);
+        let _ = progress_tx.send(ProgressEvent::BatchCompleted);
         Ok(())
     })
 }
