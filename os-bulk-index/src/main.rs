@@ -1,13 +1,15 @@
+mod file_reader;
+mod progress;
+
 use anyhow::{Context, Result};
 use clap::Parser;
-use flate2::read::GzDecoder;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
-use zstd::Decoder;
+
+use file_reader::create_reader;
+use progress::{handle_progress_events, ProgressEvent};
 
 #[derive(Parser, Debug)]
 #[command(name = "os-bulk-index")]
@@ -50,93 +52,19 @@ struct Cli {
     max_pending_batches: usize,
 }
 
-#[derive(Debug)]
-enum ProgressEvent {
-    LineRead,
-    BatchSubmitted,
-    BatchStarted,
-    BatchCompleted,
-    Finished,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
-    let progress = setup_progress_bars(args.limit);
     let client = Client::new();
     let semaphore = Arc::new(Semaphore::new(args.concurrent_requests));
     let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-    let progress_handle = tokio::spawn(handle_progress_events(progress, progress_rx));
+    let progress_handle = tokio::spawn(handle_progress_events(progress_rx, args.limit));
     let result = process_file(&args, progress_tx, client, semaphore).await;
 
     progress_handle.await.context("Progress task panicked")??;
     result.context("Failed to process file")
-}
-
-struct ProgressBars {
-    lines: ProgressBar,
-    submitted: ProgressBar,
-    in_flight: ProgressBar,
-    completed: ProgressBar,
-}
-
-fn setup_progress_bars(lines_to_read: Option<usize>) -> ProgressBars {
-    let multi = MultiProgress::new();
-    let style = ProgressStyle::default_spinner()
-        .template("{spinner:.green} [{elapsed_precise}] {prefix}: {pos} {msg}")
-        .unwrap();
-
-    let lines = multi.add(ProgressBar::new(lines_to_read.unwrap_or(0) as u64));
-    let submitted = multi.add(ProgressBar::new_spinner());
-    let in_flight = multi.add(ProgressBar::new_spinner());
-    let completed = multi.add(ProgressBar::new_spinner());
-
-    lines.set_style(style.clone());
-    submitted.set_style(style.clone());
-    in_flight.set_style(style.clone());
-    completed.set_style(style);
-
-    lines.set_prefix("Lines read");
-    submitted.set_prefix("Batches pending");
-    in_flight.set_prefix("Requests in flight");
-    completed.set_prefix("Batches completed");
-
-    ProgressBars {
-        lines,
-        submitted,
-        in_flight,
-        completed,
-    }
-}
-
-async fn handle_progress_events(
-    progress: ProgressBars,
-    mut rx: mpsc::UnboundedReceiver<ProgressEvent>,
-) -> Result<()> {
-    while let Some(event) = rx.recv().await {
-        match event {
-            ProgressEvent::LineRead => progress.lines.inc(1),
-            ProgressEvent::BatchSubmitted => progress.submitted.inc(1),
-            ProgressEvent::BatchStarted => {
-                progress.submitted.dec(1);
-                progress.in_flight.inc(1);
-            }
-            ProgressEvent::BatchCompleted => {
-                progress.in_flight.dec(1);
-                progress.completed.inc(1);
-            }
-            ProgressEvent::Finished => break,
-        }
-    }
-
-    progress.lines.finish_with_message("Done");
-    progress.submitted.finish_with_message("Done");
-    progress.in_flight.finish_with_message("Done");
-    progress.completed.finish_with_message("Done");
-
-    Ok(())
 }
 
 async fn process_file(
@@ -213,36 +141,6 @@ async fn remove_completed(
         .context("Upload task failed")?;
     handles.remove(idx);
     Ok(1)
-}
-
-enum FileReader {
-    Plain(BufReader<std::fs::File>),
-    Gzip(BufReader<GzDecoder<std::fs::File>>),
-    Zstd(BufReader<Decoder<'static, BufReader<std::fs::File>>>),
-}
-
-impl FileReader {
-    fn lines(self) -> Box<dyn Iterator<Item = std::io::Result<String>>> {
-        match self {
-            FileReader::Plain(reader) => Box::new(reader.lines()),
-            FileReader::Gzip(reader) => Box::new(reader.lines()),
-            FileReader::Zstd(reader) => Box::new(reader.lines()),
-        }
-    }
-}
-
-fn create_reader(path: &str) -> Result<FileReader> {
-    let file = std::fs::File::open(path).context("Failed to open file")?;
-
-    if path.ends_with(".zst") {
-        let decoder = Decoder::new(file).context("Failed to create zstd decoder")?;
-        Ok(FileReader::Zstd(BufReader::new(decoder)))
-    } else if path.ends_with(".gz") {
-        let decoder = GzDecoder::new(file);
-        Ok(FileReader::Gzip(BufReader::new(decoder)))
-    } else {
-        Ok(FileReader::Plain(BufReader::new(file)))
-    }
 }
 
 fn create_bulk_body(chunk: &[String], index: &str) -> String {
