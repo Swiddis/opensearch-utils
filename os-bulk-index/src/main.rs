@@ -9,10 +9,6 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use zstd::Decoder;
 
-const BATCH_SIZE: usize = 8192;
-const CONCURRENT_REQUESTS: usize = 32;
-const MAX_PENDING_BATCHES: usize = 64;
-
 #[derive(Parser, Debug)]
 #[command(name = "os-bulk-index")]
 #[command(about = "Bulk index documents into OpenSearch/Elasticsearch")]
@@ -40,6 +36,18 @@ struct Cli {
     /// Maximum number of lines to read (optional, reads all if not specified)
     #[arg(short, long)]
     limit: Option<usize>,
+
+    /// Number of documents per batch
+    #[arg(short, long, default_value_t = 8192)]
+    batch_size: usize,
+
+    /// Maximum number of concurrent requests
+    #[arg(short, long, default_value_t = 32)]
+    concurrent_requests: usize,
+
+    /// Maximum number of batches to queue while waiting for requests to complete
+    #[arg(long, default_value_t = 64)]
+    max_pending_batches: usize,
 }
 
 #[tokio::main]
@@ -48,7 +56,7 @@ async fn main() -> Result<()> {
 
     let progress = setup_progress_bars(args.limit);
     let client = Client::new();
-    let semaphore = Arc::new(Semaphore::new(CONCURRENT_REQUESTS));
+    let semaphore = Arc::new(Semaphore::new(args.concurrent_requests));
 
     process_file(&args, progress.clone(), client, semaphore)
         .await
@@ -112,7 +120,7 @@ async fn process_file(
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
     let reader = create_reader(&args.file)?;
-    let mut current_batch = Vec::with_capacity(BATCH_SIZE);
+    let mut current_batch = Vec::with_capacity(args.batch_size);
     let mut pending_handles = Vec::new();
 
     for line in reader.lines().take(args.limit.unwrap_or(usize::MAX)) {
@@ -120,8 +128,8 @@ async fn process_file(
         current_batch.push(line);
         progress.lines.inc(1);
 
-        if current_batch.len() >= BATCH_SIZE {
-            let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(BATCH_SIZE));
+        if current_batch.len() >= args.batch_size {
+            let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(args.batch_size));
             progress.submitted.inc(1);
             pending_handles.push(spawn_upload_task(
                 batch,
@@ -135,7 +143,7 @@ async fn process_file(
             ));
 
             // When we hit our limit, start going through the queue
-            while pending_handles.len() >= MAX_PENDING_BATCHES {
+            while pending_handles.len() >= args.max_pending_batches {
                 remove_completed(&mut pending_handles).await?;
             }
         }

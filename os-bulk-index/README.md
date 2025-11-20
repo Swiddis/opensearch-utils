@@ -29,11 +29,24 @@ Bulk index documents into OpenSearch/Elasticsearch
 Usage: bulk-index [OPTIONS] --file <FILE> --index <INDEX>
 
 Options:
-  -f, --file <FILE>          Path to the dataset file (supports .json, .json.gz, .json.zst)
-  -i, --index <INDEX>        Target index name
-  -e, --endpoint <ENDPOINT>  OpenSearch/Elasticsearch endpoint URL [default: http://localhost:9200]
-  -u, --username <USERNAME>  Username for HTTP basic authentication
-  -p, --password <PASSWORD>  Password for HTTP basic authentication
-  -l, --limit <LIMIT>        Maximum number of lines to read (optional, reads all if not specified)
-  -h, --help                 Print help
+  -f, --file <FILE>
+          Path to the dataset file (supports .json, .json.gz, .json.zst)
+  -i, --index <INDEX>
+          Target index name
+  -e, --endpoint <ENDPOINT>
+          OpenSearch/Elasticsearch endpoint URL [default: http://localhost:9200]
+  -u, --username <USERNAME>
+          Username for HTTP basic authentication
+  -p, --password <PASSWORD>
+          Password for HTTP basic authentication
+  -l, --limit <LIMIT>
+          Maximum number of lines to read (optional, reads all if not specified)
+  -b, --batch-size <BATCH_SIZE>
+          Number of documents per batch [default: 8192]
+  -c, --concurrent-requests <CONCURRENT_REQUESTS>
+          Maximum number of concurrent requests [default: 32]
+      --max-pending-batches <MAX_PENDING_BATCHES>
+          Maximum number of batches to queue while waiting for requests to complete [default: 64]
+  -h, --help
+          Print help
 ```
