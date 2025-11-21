@@ -27,7 +27,7 @@ class OpenSearchPPLUser(HttpUser):
             settings.get("transient", {})
             .get("plugins", {})
             .get("calcite", {})
-            .get("enabled", "false")
+            .get("enabled", "true")
             != "true"
         ):
             raise AssertionError(
