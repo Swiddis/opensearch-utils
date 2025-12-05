@@ -1,0 +1,6 @@
+source = big5
+| where `agent.type` = 'filebeat'
+| where `@timestamp` >= '2023-01-01 00:00:00' and `@timestamp` <= '2023-01-02 00:00:00'
+| where `metrics.size` >= 100 and `agent.name` != 'metricbeat'
+| sort `@timestamp`, `agent.name`
+| fields + `@timestamp`, `agent.name`, `agent.type`, `host.name`, `cloud.region`, `metrics.size`, `message`

@@ -1,0 +1,5 @@
+source = big5
+| where `cloud.region` = 'us-east-1'
+| where `@timestamp` >= '2023-01-01 00:00:00' and `@timestamp` <= '2023-01-02 00:00:00'
+| stats count() by `cloud.region`
+| where `count()` < 10000

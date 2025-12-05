@@ -1,0 +1,6 @@
+source = big5
+| where `agent.name` = 'filebeat'
+| where `@timestamp` >= '2023-01-01 00:00:00' and `@timestamp` <= '2023-01-02 00:00:00'
+| stats count() by span(`@timestamp`, 1h) as timestamp, `agent.name`, `host.name`
+| sort `timestamp`
+| fields + `timestamp`, `agent.name`, `host.name`, `count()`

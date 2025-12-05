@@ -1,0 +1,5 @@
+source = big5
+| where `host.name` = 'server-01'
+| where `@timestamp` >= '2023-01-01 00:00:00' and `@timestamp` <= '2023-01-02 00:00:00'
+| where not isnull(`host.name`) and `agent.name` != 'metricbeat'
+| stats count(`host.name`)
