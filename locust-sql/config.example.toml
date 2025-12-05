@@ -1,0 +1,25 @@
+# Locust PPL Load Test Configuration
+
+[database]
+# Path to SQLite database for storing response times
+file = "query_response_times.db"
+
+[calcite]
+# Whether Calcite should be enabled in the cluster
+enabled = true
+# If true, will update the cluster setting; if false, will only check and fail if mismatch
+enforce = true
+
+[tests]
+# Directory containing PPL query files
+ppl_directory = "ppl-patterns"
+# Patterns to exclude from test execution (queries containing these strings will be skipped)
+exclude_patterns = ["range_auto_date", "headless"]
+
+[run_tracking]
+# How to track run IDs: "database" (recommended) or "file"
+# - "database": Stores run metadata in the database with start/end times
+# - "file": Legacy mode that appends to run_ids.txt
+method = "database"
+# Only used if method = "file"
+file = "run_ids.txt"
