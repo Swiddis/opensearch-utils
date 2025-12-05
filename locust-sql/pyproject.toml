@@ -8,3 +8,9 @@ dependencies = [
     "httpx>=0.28.1",
     "locust>=2.40.5",
 ]
+
+[dependency-groups]
+dev = [
+    "black>=25.11.0",
+    "isort>=7.0.0",
+]
