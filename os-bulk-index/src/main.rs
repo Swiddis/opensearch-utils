@@ -6,10 +6,10 @@ use clap::Parser;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 
 use file_reader::create_reader;
-use progress::{handle_progress_events, ProgressEvent};
+use progress::{ProgressEvent, handle_progress_events};
 
 #[derive(Parser, Debug)]
 #[command(name = "os-bulk-index")]
@@ -128,9 +128,7 @@ async fn process_file(
     Ok(())
 }
 
-async fn remove_completed(
-    handles: &mut Vec<tokio::task::JoinHandle<Result<()>>>,
-) -> Result<usize> {
+async fn remove_completed(handles: &mut Vec<tokio::task::JoinHandle<Result<()>>>) -> Result<usize> {
     if handles.is_empty() {
         return Ok(0);
     }
@@ -178,21 +176,35 @@ fn spawn_upload_task(
 
         let _ = progress_tx.send(ProgressEvent::BatchStarted);
 
-        let mut request = client
-            .post(&bulk_url)
-            .header("Content-Type", "application/x-ndjson")
-            .body(bulk_body);
+        let max_retries = 5;
+        let mut retry_count = 0;
+        let mut delay_ms = 500u64;
 
-        if let (Some(user), Some(pass)) = (username, password) {
-            request = request.basic_auth(user, Some(pass));
+        loop {
+            let mut request = client
+                .post(&bulk_url)
+                .header("Content-Type", "application/x-ndjson")
+                .body(bulk_body.clone());
+
+            if let (Some(user), Some(pass)) = (&username, &password) {
+                request = request.basic_auth(user, Some(pass));
+            }
+
+            let response = request.send().await.context("Failed to send request")?;
+
+            // Special case: exponential backoff for 429s
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+                && retry_count < max_retries
+            {
+                retry_count += 1;
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                delay_ms *= 2;
+                continue;
+            }
+
+            response.error_for_status().context("Request failed")?;
+            break;
         }
-
-        request
-            .send()
-            .await
-            .context("Failed to send request")?
-            .error_for_status()
-            .context("Request failed")?;
 
         let _ = progress_tx.send(ProgressEvent::BatchCompleted);
         Ok(())
