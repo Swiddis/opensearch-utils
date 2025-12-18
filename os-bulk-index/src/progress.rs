@@ -2,6 +2,8 @@ use anyhow::Result;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::sync::mpsc;
 
+use std::time::Duration;
+
 #[derive(Debug)]
 pub enum ProgressEvent {
     LineRead,
@@ -38,6 +40,12 @@ pub fn setup_progress_bars(lines_to_read: Option<usize>) -> ProgressBars {
     submitted.set_prefix("Batches pending");
     in_flight.set_prefix("Requests in flight");
     completed.set_prefix("Batches completed");
+
+    // Enable steady tick to ensure display updates even during quiet periods
+    lines.enable_steady_tick(Duration::from_millis(100));
+    submitted.enable_steady_tick(Duration::from_millis(100));
+    in_flight.enable_steady_tick(Duration::from_millis(100));
+    completed.enable_steady_tick(Duration::from_millis(100));
 
     ProgressBars {
         lines,

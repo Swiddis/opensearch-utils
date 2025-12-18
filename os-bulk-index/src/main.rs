@@ -2,10 +2,12 @@ mod file_reader;
 mod progress;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::Parser;
+use regex::Regex;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{Semaphore, mpsc};
 
 use file_reader::create_reader;
@@ -50,6 +52,10 @@ struct Cli {
     /// Maximum number of in-progress batches to concurrently keep in memory
     #[arg(long, default_value_t = 64)]
     max_pending_batches: usize,
+
+    /// Live mode: skip _id field and replace timestamps with current time
+    #[arg(long)]
+    live: bool,
 }
 
 #[tokio::main]
@@ -94,6 +100,7 @@ async fn process_file(
                 &args.index,
                 args.username.as_deref(),
                 args.password.as_deref(),
+                args.live,
             ));
 
             // When we hit our limit, start going through the queue
@@ -115,6 +122,7 @@ async fn process_file(
             &args.index,
             args.username.as_deref(),
             args.password.as_deref(),
+            args.live,
         ));
     }
 
@@ -141,15 +149,39 @@ async fn remove_completed(handles: &mut Vec<tokio::task::JoinHandle<Result<()>>>
     Ok(1)
 }
 
-fn create_bulk_body(chunk: &[String], index: &str) -> String {
+fn replace_timestamps(line: &str) -> String {
+    static ISO_TIMESTAMP_RE: OnceLock<Regex> = OnceLock::new();
+    let re = ISO_TIMESTAMP_RE.get_or_init(|| {
+        // Match ISO 8601 timestamps like:
+        // 2024-11-20T18:35:12.123Z
+        // 2024-11-20T18:35:12Z
+        // 2024-11-20T18:35:12.123+00:00
+        // 2024-11-20 18:35:12
+        Regex::new(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{3,9})?(?:Z|[+-]\d{2}:\d{2})?")
+            .unwrap()
+    });
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    re.replace_all(line, now.as_str()).to_string()
+}
+
+fn create_bulk_body(chunk: &[String], index: &str, live: bool) -> String {
     let mut bulk_body = String::new();
     for line in chunk {
-        let id = hex::encode(&Sha256::digest(line.as_bytes())[..12]);
-        bulk_body.push_str(&format!(
-            "{{\"create\":{{\"_index\":\"{}\",\"_id\":\"{}\"}}}}\n",
-            index, id
-        ));
-        bulk_body.push_str(line);
+        // In live mode, skip the _id field to let OpenSearch generate it
+        if live {
+            bulk_body.push_str(&format!("{{\"create\":{{\"_index\":\"{}\"}}}}\n", index));
+            // Replace timestamps with current time in live mode
+            let updated_line = replace_timestamps(line);
+            bulk_body.push_str(&updated_line);
+        } else {
+            let id = hex::encode(&Sha256::digest(line.as_bytes())[..12]);
+            bulk_body.push_str(&format!(
+                "{{\"create\":{{\"_index\":\"{}\",\"_id\":\"{}\"}}}}\n",
+                index, id
+            ));
+            bulk_body.push_str(line);
+        }
         bulk_body.push('\n');
     }
     bulk_body
@@ -164,6 +196,7 @@ fn spawn_upload_task(
     index: &str,
     username: Option<&str>,
     password: Option<&str>,
+    live: bool,
 ) -> tokio::task::JoinHandle<Result<()>> {
     let bulk_url = format!("{}/_bulk", endpoint);
     let index = index.to_string();
@@ -172,7 +205,7 @@ fn spawn_upload_task(
 
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await?;
-        let bulk_body = create_bulk_body(&chunk, &index);
+        let bulk_body = create_bulk_body(&chunk, &index, live);
 
         let _ = progress_tx.send(ProgressEvent::BatchStarted);
 
