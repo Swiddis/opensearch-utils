@@ -3,9 +3,12 @@
 import json
 import sqlite3
 import threading
+import time
 import tomllib
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
+from queue import Queue
 from uuid import uuid4
 
 
@@ -28,6 +31,16 @@ class DatabaseManager:
         self.db_file = config["database"]["file"]
         self.run_id = str(uuid4())
         self.db_lock = threading.Lock()
+
+        # Batch writing configuration
+        self.batch_size = config["database"].get("batch_size", 100)
+        self.flush_interval = config["database"].get("flush_interval", 1.0)
+        self.record_queue = Queue()
+        self.writer_running = True
+
+        # Start background writer thread
+        self.writer_thread = threading.Thread(target=self._batch_writer, daemon=True)
+        self.writer_thread.start()
 
     def init_database(self):
         """Initialize the SQLite database and create necessary tables."""
@@ -133,30 +146,77 @@ class DatabaseManager:
             with open(run_file, "a") as fp:
                 fp.write(f"{end_time} -- {self.run_id} -- {status}\n")
 
-    def record_response(
-        self, query_name, response_time, status_code, success, error_message
-    ):
-        """Record a single request's response time to the database."""
-        timestamp = datetime.now(UTC).isoformat()
+    def _batch_writer(self):
+        """Background thread that writes batched records to the database."""
+        batch = []
+        last_flush = time.time()
+
+        while self.writer_running or not self.record_queue.empty():
+            try:
+                # Try to get a record with timeout
+                timeout = max(0.1, self.flush_interval - (time.time() - last_flush))
+                record = self.record_queue.get(timeout=timeout)
+                batch.append(record)
+
+                # Flush if batch is full or interval elapsed
+                should_flush = (
+                    len(batch) >= self.batch_size
+                    or (time.time() - last_flush) >= self.flush_interval
+                )
+
+                if should_flush:
+                    self._flush_batch(batch)
+                    batch = []
+                    last_flush = time.time()
+
+            except Exception:
+                # Timeout or queue empty - flush if we have data and interval elapsed
+                if batch and (time.time() - last_flush) >= self.flush_interval:
+                    self._flush_batch(batch)
+                    batch = []
+                    last_flush = time.time()
+
+        # Final flush of any remaining records
+        if batch:
+            self._flush_batch(batch)
+
+    def _flush_batch(self, batch):
+        """Flush a batch of records to the database."""
+        if not batch:
+            return
 
         with self.db_lock:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            cursor.execute(
+            cursor.executemany(
                 """
                 INSERT INTO response_times
                 (run_id, timestamp, query_name, response_time_ms, status_code, success, error_message)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-                (
-                    self.run_id,
-                    timestamp,
-                    query_name,
-                    response_time,
-                    status_code,
-                    success,
-                    error_message,
-                ),
+                batch,
             )
             conn.commit()
             conn.close()
+
+    def record_response(
+        self, query_name, response_time, status_code, success, error_message
+    ):
+        """Record a single request's response time to the queue for batch writing."""
+        timestamp = datetime.now(UTC).isoformat()
+
+        record = (
+            self.run_id,
+            timestamp,
+            query_name,
+            response_time,
+            status_code,
+            success,
+            error_message,
+        )
+        self.record_queue.put(record)
+
+    def flush_remaining(self):
+        """Stop the writer thread and flush all remaining records."""
+        self.writer_running = False
+        self.writer_thread.join(timeout=10.0)  # Wait up to 10 seconds for flush

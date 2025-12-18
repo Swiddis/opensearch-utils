@@ -42,6 +42,7 @@ events.request.add_listener(record_response)
 @events.quitting.add_listener
 def on_quitting(_environment, **_kwargs):
     """Handle locust shutdown to mark run as completed."""
+    db_manager.flush_remaining()
     db_manager.end_run("completed")
 
 

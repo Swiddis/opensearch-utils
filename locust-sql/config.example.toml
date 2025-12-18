@@ -3,6 +3,10 @@
 [database]
 # Path to SQLite database for storing response times
 file = "query_response_times.db"
+# Batch size for writing records (higher = fewer writes, more memory)
+batch_size = 100
+# Flush interval in seconds (records are written when batch is full OR interval elapses)
+flush_interval = 1.0
 
 [calcite]
 # Whether Calcite should be enabled in the cluster
