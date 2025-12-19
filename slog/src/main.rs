@@ -36,6 +36,7 @@ struct Args {
 struct LogEntry {
     #[serde(rename = "@timestamp")]
     timestamp: String,
+    log_type: String,
     severity: String,
     class: String,
     node_id: String,
@@ -123,6 +124,7 @@ impl LogParser {
 
         Some(LogEntry {
             timestamp: caps.name("timestamp")?.as_str().to_string(),
+            log_type: "http".to_string(),
             severity: caps.name("severity")?.as_str().trim().to_string(),
             class: caps.name("class")?.as_str().trim().to_string(),
             node_id: caps.name("node_id")?.as_str().trim().to_string(),
@@ -176,6 +178,7 @@ impl LogParser {
 
         Some(LogEntry {
             timestamp: caps.name("timestamp")?.as_str().to_string(),
+            log_type: "exception".to_string(),
             severity: caps.name("severity")?.as_str().trim().to_string(),
             class: caps.name("class")?.as_str().trim().to_string(),
             node_id: caps.name("node_id")?.as_str().trim().to_string(),
@@ -206,6 +209,7 @@ impl LogParser {
 
         Some(LogEntry {
             timestamp: caps.name("timestamp")?.as_str().to_string(),
+            log_type: "generic".to_string(),
             severity: caps.name("severity")?.as_str().trim().to_string(),
             class: caps.name("class")?.as_str().trim().to_string(),
             node_id: caps.name("node_id")?.as_str().trim().to_string(),
@@ -559,6 +563,29 @@ Caused by: javax.net.ssl.SSLHandshakeException: Empty cert
         let regular_json = serde_json::to_string(&regular_entry).expect("Failed to serialize");
         assert!(!regular_json.contains("request_method"));
         assert!(!regular_json.contains("exception_type"));
+    }
+
+    #[test]
+    fn test_log_type_discriminator() {
+        let parser = LogParser::new();
+
+        // Test HTTP log type
+        let http_log = "[2025-01-01T10:00:00,123][INFO ][o.o.n.c.logger][node] GET / - 200 OK 100 5";
+        let http_entry = parser.parse(http_log).expect("Failed to parse HTTP log");
+        let http_json = serde_json::to_string(&http_entry).expect("Failed to serialize");
+        assert!(http_json.contains("\"log_type\":\"http\""));
+
+        // Test exception log type
+        let exc_log = "[2025-01-01T10:00:00,123][ERROR][o.o.t.n.s.Transport][node] Exception: java.lang.RuntimeException: Test\n\tat test.method(Test.java:10)";
+        let exc_entry = parser.parse(exc_log).expect("Failed to parse exception log");
+        let exc_json = serde_json::to_string(&exc_entry).expect("Failed to serialize");
+        assert!(exc_json.contains("\"log_type\":\"exception\""));
+
+        // Test generic log type
+        let generic_log = "[2025-01-01T10:00:00,123][INFO ][c.a.a.c.MetricClient][node] regular message";
+        let generic_entry = parser.parse(generic_log).expect("Failed to parse generic log");
+        let generic_json = serde_json::to_string(&generic_entry).expect("Failed to serialize");
+        assert!(generic_json.contains("\"log_type\":\"generic\""));
     }
 
     #[test]
