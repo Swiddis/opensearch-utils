@@ -43,3 +43,30 @@ Options:
       --json      Output logs as NDJSON
   -h, --help      Print help
 ```
+
+## JSON Output Fields
+
+When using `--json`, logs are output as NDJSON with the following fields:
+
+**Core Fields:**
+- `@timestamp`: Log timestamp
+- `severity`: Log level (INFO, WARN, ERROR, etc.)
+- `class`: Java class name
+- `node_id`: OpenSearch node identifier
+- `body`: Full log message body
+
+**HTTP Request Fields** (when applicable):
+- `request_method`: HTTP method (GET, POST, etc.)
+- `request_url`: HTTP request URL
+- `request_parameters`: URL query parameters (or null for `-`)
+- `response_status`: HTTP status (e.g., "200 OK")
+- `response_status_code`: HTTP status code (numeric)
+- `response_bytes`: Response size in bytes
+- `response_latency_ms`: Request latency in milliseconds
+
+**Exception Fields** (when applicable):
+- `exception_type`: Fully qualified exception class name
+- `exception_message`: Exception message
+- `exception_trace`: Full stack trace
+
+An OpenSearch mapping file (`opensearch-mapping.json`) is included for reference if you want to index the JSON output.

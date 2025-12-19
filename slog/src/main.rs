@@ -34,6 +34,7 @@ struct Args {
 
 #[derive(Serialize)]
 struct LogEntry {
+    #[serde(rename = "@timestamp")]
     timestamp: String,
     severity: String,
     class: String,
@@ -546,8 +547,8 @@ Caused by: javax.net.ssl.SSLHandshakeException: Empty cert
         let entry = parser.parse(log).expect("Failed to parse log");
         let json = serde_json::to_string(&entry).expect("Failed to serialize to JSON");
 
-        // Verify JSON contains expected fields
-        assert!(json.contains("\"timestamp\":\"2025-01-01T10:00:00,123\""));
+        // Verify JSON contains expected fields with @timestamp
+        assert!(json.contains("\"@timestamp\":\"2025-01-01T10:00:00,123\""));
         assert!(json.contains("\"severity\":\"INFO\""));
         assert!(json.contains("\"request_method\":\"GET\""));
         assert!(json.contains("\"response_status_code\":200"));
