@@ -17,9 +17,9 @@ use progress::{ProgressEvent, handle_progress_events};
 #[command(name = "os-bulk-index")]
 #[command(about = "Bulk index documents into OpenSearch/Elasticsearch")]
 struct Cli {
-    /// Path to the dataset file (supports .json, .json.gz, .json.zst)
+    /// Path to the dataset file (supports .json, .json.gz, .json.bz2, .json.zst). Defaults to stdin if not provided.
     #[arg(short, long)]
-    file: String,
+    file: Option<String>,
 
     /// Target index name
     #[arg(short, long)]
@@ -79,7 +79,7 @@ async fn process_file(
     client: Client,
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
-    let reader = create_reader(&args.file)?;
+    let reader = create_reader(args.file.as_deref())?;
     let mut current_batch = Vec::with_capacity(args.batch_size);
     let mut pending_handles = Vec::new();
 
