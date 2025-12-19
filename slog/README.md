@@ -31,5 +31,15 @@ $ cargo install --path .
 ## Usage
 
 ```
-slog <pattern> [pattern2 ...] [--no-color]
+OpenSearch log parser and viewer
+
+Usage: slog [OPTIONS] <PATTERNS>...
+
+Arguments:
+  <PATTERNS>...  File patterns to process
+
+Options:
+      --no-color  Disable colored output
+      --json      Output logs as NDJSON
+  -h, --help      Print help
 ```
