@@ -56,6 +56,10 @@ struct Cli {
     /// Live mode: skip _id field and replace timestamps with current time
     #[arg(long)]
     live: bool,
+
+    /// Rate limit in documents per second (optional, no limit if not specified)
+    #[arg(short, long)]
+    rate: Option<f64>,
 }
 
 #[tokio::main]
@@ -80,17 +84,44 @@ async fn process_file(
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
     let reader = create_reader(args.file.as_deref())?;
-    let mut current_batch = Vec::with_capacity(args.batch_size);
+    let mut current_batch: Vec<(String, chrono::DateTime<Utc>)> = Vec::with_capacity(args.batch_size);
     let mut pending_handles = Vec::new();
+    let mut last_batch_time = tokio::time::Instant::now();
+
+    // Initialize rate limiter if rate is specified
+    let rate_limiter = args.rate.map(|rate| {
+        let interval = std::time::Duration::from_secs_f64(1.0 / rate);
+        (tokio::time::Instant::now(), interval, 0usize)
+    });
+    let mut rate_limiter = rate_limiter;
 
     for line in reader.lines().take(args.limit.unwrap_or(usize::MAX)) {
         let line = line.context("Failed to read line")?;
-        current_batch.push(line);
         let _ = progress_tx.send(ProgressEvent::LineRead);
 
-        if current_batch.len() >= args.batch_size {
+        // Apply rate limiting if enabled
+        if let Some((start_time, interval, docs_count)) = rate_limiter.as_mut() {
+            *docs_count += 1;
+            let expected_time = *start_time + interval.mul_f64(*docs_count as f64);
+            let now = tokio::time::Instant::now();
+            if expected_time > now {
+                tokio::time::sleep(expected_time - now).await;
+            }
+        }
+
+        // Capture timestamp after rate limiting
+        let timestamp = Utc::now();
+        current_batch.push((line, timestamp));
+
+        // Check if we should flush: batch is full OR 1 second has elapsed with pending docs
+        let time_elapsed = tokio::time::Instant::now().duration_since(last_batch_time);
+        let should_flush = current_batch.len() >= args.batch_size
+            || (!current_batch.is_empty() && time_elapsed >= std::time::Duration::from_secs(1));
+
+        if should_flush {
             let batch = std::mem::replace(&mut current_batch, Vec::with_capacity(args.batch_size));
             let _ = progress_tx.send(ProgressEvent::BatchSubmitted);
+            last_batch_time = tokio::time::Instant::now();
             pending_handles.push(spawn_upload_task(
                 batch,
                 Arc::clone(&semaphore),
@@ -149,7 +180,7 @@ async fn remove_completed(handles: &mut Vec<tokio::task::JoinHandle<Result<()>>>
     Ok(1)
 }
 
-fn replace_timestamps(line: &str) -> String {
+fn replace_timestamps(line: &str, timestamp: &chrono::DateTime<Utc>) -> String {
     static ISO_TIMESTAMP_RE: OnceLock<Regex> = OnceLock::new();
     let re = ISO_TIMESTAMP_RE.get_or_init(|| {
         // Match ISO 8601 timestamps like:
@@ -161,18 +192,18 @@ fn replace_timestamps(line: &str) -> String {
             .unwrap()
     });
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    re.replace_all(line, now.as_str()).to_string()
+    let timestamp_str = timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    re.replace_all(line, timestamp_str.as_str()).to_string()
 }
 
-fn create_bulk_body(chunk: &[String], index: &str, live: bool) -> String {
+fn create_bulk_body(chunk: &[(String, chrono::DateTime<Utc>)], index: &str, live: bool) -> String {
     let mut bulk_body = String::new();
-    for line in chunk {
+    for (line, timestamp) in chunk {
         // In live mode, skip the _id field to let OpenSearch generate it
         if live {
             bulk_body.push_str(&format!("{{\"create\":{{\"_index\":\"{}\"}}}}\n", index));
-            // Replace timestamps with current time in live mode
-            let updated_line = replace_timestamps(line);
+            // Replace timestamps with the captured timestamp
+            let updated_line = replace_timestamps(line, timestamp);
             bulk_body.push_str(&updated_line);
         } else {
             let id = hex::encode(&Sha256::digest(line.as_bytes())[..12]);
@@ -188,7 +219,7 @@ fn create_bulk_body(chunk: &[String], index: &str, live: bool) -> String {
 }
 
 fn spawn_upload_task(
-    chunk: Vec<String>,
+    chunk: Vec<(String, chrono::DateTime<Utc>)>,
     semaphore: Arc<Semaphore>,
     client: Client,
     progress_tx: mpsc::UnboundedSender<ProgressEvent>,
