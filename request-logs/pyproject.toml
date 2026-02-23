@@ -1,0 +1,11 @@
+[project]
+name = "index-to-csv"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "opensearch-py>=2.4.0",
+    "faker>=30.0.0",
+    "noise>=1.2.2",
+]
