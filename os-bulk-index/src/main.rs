@@ -6,6 +6,8 @@ use chrono::Utc;
 use clap::Parser;
 use regex::Regex;
 use reqwest::Client;
+use serde::Deserialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{Semaphore, mpsc};
@@ -15,12 +17,8 @@ use progress::{ProgressEvent, handle_progress_events};
 
 #[derive(Parser, Debug)]
 #[command(name = "os-bulk-index")]
-#[command(about = "Bulk index documents into OpenSearch/Elasticsearch")]
+#[command(about = "Bulk index documents into OpenSearch/Elasticsearch, or scan/export them")]
 struct Cli {
-    /// Path to the dataset file (supports .json, .json.gz, .json.bz2, .json.zst). Defaults to stdin if not provided.
-    #[arg(short, long)]
-    file: Option<String>,
-
     /// Target index name
     #[arg(short, long)]
     index: String,
@@ -36,6 +34,15 @@ struct Cli {
     /// Password for HTTP basic authentication
     #[arg(short, long)]
     password: Option<String>,
+
+    /// Scan mode: export documents from the index to stdout as NDJSON
+    #[arg(long)]
+    scan: bool,
+
+    // Index mode options (only used when --scan is not set)
+    /// Path to the dataset file (supports .json, .json.gz, .json.bz2, .json.zst). Defaults to stdin if not provided.
+    #[arg(short, long)]
+    file: Option<String>,
 
     /// Maximum number of lines to read (optional, reads all if not specified)
     #[arg(short, long)]
@@ -60,21 +67,167 @@ struct Cli {
     /// Rate limit in documents per second (optional, no limit if not specified)
     #[arg(short, long)]
     rate: Option<f64>,
+
+    // Scan mode options (only used when --scan is set)
+    /// Scroll timeout for scan operations (e.g., "1m", "30s")
+    #[arg(long, default_value = "1m")]
+    scroll_timeout: String,
+
+    /// Query to filter documents during scan (JSON query DSL)
+    #[arg(long)]
+    query: Option<String>,
+
+    /// Size of each scroll batch
+    #[arg(long, default_value_t = 1000)]
+    scroll_size: usize,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
+    if args.scan {
+        // Scan mode: export documents from index
+        scan_index(&args).await
+    } else {
+        // Index mode: upload documents to index
+        index_documents(&args).await
+    }
+}
+
+async fn index_documents(args: &Cli) -> Result<()> {
     let client = Client::new();
     let semaphore = Arc::new(Semaphore::new(args.concurrent_requests));
     let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
     let progress_handle = tokio::spawn(handle_progress_events(progress_rx, args.limit));
-    let result = process_file(&args, progress_tx, client, semaphore).await;
+    let result = process_file(args, progress_tx, client, semaphore).await;
 
     progress_handle.await.context("Progress task panicked")??;
     result.context("Failed to process file")
+}
+
+#[derive(Deserialize)]
+struct ScrollResponse {
+    _scroll_id: String,
+    hits: HitsWrapper,
+}
+
+#[derive(Deserialize)]
+struct HitsWrapper {
+    hits: Vec<Hit>,
+}
+
+#[derive(Deserialize)]
+struct Hit {
+    _source: Value,
+}
+
+async fn scan_index(args: &Cli) -> Result<()> {
+    let client = Client::new();
+    let query = parse_query(&args.query)?;
+
+    let mut scroll_response = initiate_scroll(&client, args, &query).await?;
+    let mut total_docs = output_hits(&scroll_response.hits.hits)?;
+
+    while !scroll_response.hits.hits.is_empty() {
+        scroll_response = continue_scroll(&client, args, &scroll_response._scroll_id).await?;
+        total_docs += output_hits(&scroll_response.hits.hits)?;
+    }
+
+    cleanup_scroll(&client, args, &scroll_response._scroll_id).await;
+    eprintln!("Scanned {} documents", total_docs);
+
+    Ok(())
+}
+
+fn parse_query(query_arg: &Option<String>) -> Result<Value> {
+    if let Some(query_str) = query_arg {
+        serde_json::from_str::<Value>(query_str).context("Failed to parse query JSON")
+    } else {
+        Ok(serde_json::json!({ "match_all": {} }))
+    }
+}
+
+async fn initiate_scroll(client: &Client, args: &Cli, query: &Value) -> Result<ScrollResponse> {
+    let search_body = serde_json::json!({
+        "query": query,
+        "size": args.scroll_size,
+    });
+
+    let search_url = format!(
+        "{}/{}/_search?scroll={}",
+        args.endpoint, args.index, args.scroll_timeout
+    );
+
+    let mut request = client
+        .post(&search_url)
+        .header("Content-Type", "application/json")
+        .json(&search_body);
+
+    if let (Some(user), Some(pass)) = (&args.username, &args.password) {
+        request = request.basic_auth(user, Some(pass));
+    }
+
+    request
+        .send()
+        .await
+        .context("Failed to send initial search request")?
+        .error_for_status()
+        .context("Initial search request failed")?
+        .json()
+        .await
+        .context("Failed to parse initial search response")
+}
+
+async fn continue_scroll(client: &Client, args: &Cli, scroll_id: &str) -> Result<ScrollResponse> {
+    let scroll_url = format!("{}/_search/scroll", args.endpoint);
+    let scroll_body = serde_json::json!({
+        "scroll": args.scroll_timeout,
+        "scroll_id": scroll_id,
+    });
+
+    let mut request = client
+        .post(&scroll_url)
+        .header("Content-Type", "application/json")
+        .json(&scroll_body);
+
+    if let (Some(user), Some(pass)) = (&args.username, &args.password) {
+        request = request.basic_auth(user, Some(pass));
+    }
+
+    request
+        .send()
+        .await
+        .context("Failed to send scroll request")?
+        .error_for_status()
+        .context("Scroll request failed")?
+        .json()
+        .await
+        .context("Failed to parse scroll response")
+}
+
+fn output_hits(hits: &[Hit]) -> Result<usize> {
+    for hit in hits {
+        println!("{}", serde_json::to_string(&hit._source)?);
+    }
+    Ok(hits.len())
+}
+
+async fn cleanup_scroll(client: &Client, args: &Cli, scroll_id: &str) {
+    let clear_scroll_url = format!("{}/_search/scroll", args.endpoint);
+    let clear_body = serde_json::json!({ "scroll_id": scroll_id });
+
+    let mut request = client
+        .delete(&clear_scroll_url)
+        .header("Content-Type", "application/json")
+        .json(&clear_body);
+
+    if let (Some(user), Some(pass)) = (&args.username, &args.password) {
+        request = request.basic_auth(user, Some(pass));
+    }
+
+    let _ = request.send().await;
 }
 
 async fn process_file(
@@ -84,7 +237,8 @@ async fn process_file(
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
     let reader = create_reader(args.file.as_deref())?;
-    let mut current_batch: Vec<(String, chrono::DateTime<Utc>)> = Vec::with_capacity(args.batch_size);
+    let mut current_batch: Vec<(String, chrono::DateTime<Utc>)> =
+        Vec::with_capacity(args.batch_size);
     let mut pending_handles = Vec::new();
     let mut last_batch_time = tokio::time::Instant::now();
 
