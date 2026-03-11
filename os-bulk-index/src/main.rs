@@ -128,15 +128,13 @@ async fn scan_index(args: &Cli) -> Result<()> {
     let query = parse_query(&args.query)?;
 
     let mut scroll_response = initiate_scroll(&client, args, &query).await?;
-    let mut total_docs = output_hits(&scroll_response.hits.hits)?;
 
     while !scroll_response.hits.hits.is_empty() {
         scroll_response = continue_scroll(&client, args, &scroll_response._scroll_id).await?;
-        total_docs += output_hits(&scroll_response.hits.hits)?;
+        output_hits(&scroll_response.hits.hits)?;
     }
 
     cleanup_scroll(&client, args, &scroll_response._scroll_id).await;
-    eprintln!("Scanned {} documents", total_docs);
 
     Ok(())
 }
