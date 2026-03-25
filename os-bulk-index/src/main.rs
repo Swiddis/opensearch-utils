@@ -80,6 +80,10 @@ struct Cli {
     /// Size of each scroll batch
     #[arg(long, default_value_t = 1000)]
     scroll_size: usize,
+
+    /// Watch mode: monitor cluster and re-run indexing on restart
+    #[arg(long)]
+    watch: bool,
 }
 
 #[tokio::main]
@@ -96,6 +100,45 @@ async fn main() -> Result<()> {
 }
 
 async fn index_documents(args: &Cli) -> Result<()> {
+    if !args.watch {
+        // Normal mode: run once
+        run_indexing_once(args).await?;
+        return Ok(());
+    }
+    // Watch mode: run indefinitely, restarting when cluster restarts
+    loop {
+        eprintln!("Starting indexing...");
+        let result = run_indexing_once(args).await;
+
+        match result {
+            Ok(_) => eprintln!("Indexing completed successfully"),
+            Err(e) => eprintln!("Indexing failed: {}", e),
+        }
+
+        eprintln!("Watch mode: monitoring cluster...");
+
+        // Wait for cluster to go down
+        let client = Client::new();
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            if !check_cluster_health(&client, args).await {
+                eprintln!("Cluster is down, waiting for it to come back up...");
+                break;
+            }
+        }
+
+        // Wait for cluster to come back up
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            if check_cluster_health(&client, args).await {
+                eprintln!("Cluster is back up, restarting indexing...");
+                break;
+            }
+        }
+    }
+}
+
+async fn run_indexing_once(args: &Cli) -> Result<()> {
     let client = Client::new();
     let semaphore = Arc::new(Semaphore::new(args.concurrent_requests));
     let (progress_tx, progress_rx) = mpsc::unbounded_channel();
@@ -226,6 +269,20 @@ async fn cleanup_scroll(client: &Client, args: &Cli, scroll_id: &str) {
     }
 
     let _ = request.send().await;
+}
+
+async fn check_cluster_health(client: &Client, args: &Cli) -> bool {
+    let mut request = client.get(&args.endpoint);
+
+    if let (Some(user), Some(pass)) = (&args.username, &args.password) {
+        request = request.basic_auth(user, Some(pass));
+    }
+
+    request
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 async fn process_file(
