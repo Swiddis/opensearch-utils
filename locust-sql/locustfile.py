@@ -6,6 +6,7 @@ from opentelemetry import trace
 
 from database import DatabaseManager, load_config
 from otel_tracing import OTELTracingManager
+from otel_metrics import ClusterMetricsCollector
 
 # Global configuration and database manager
 CONFIG = load_config()
@@ -14,6 +15,10 @@ db_manager = DatabaseManager(CONFIG)
 # OTEL tracing manager (if enabled)
 otel_manager = OTELTracingManager(CONFIG, db_manager.run_id)
 otel_manager.init_tracing()
+
+# OTEL metrics collector (if enabled)
+metrics_collector: ClusterMetricsCollector = None
+metrics_collector_started = False
 
 
 def record_response(
@@ -51,6 +56,8 @@ def on_quitting(_environment, **_kwargs):
     db_manager.flush_remaining()
     db_manager.end_run("completed")
     otel_manager.shutdown()
+    if metrics_collector:
+        metrics_collector.shutdown()
 
 
 # Initialize database and start run tracking
@@ -72,6 +79,7 @@ class OpenSearchPPLUser(HttpUser):
         """Initialize user session: load queries and configure cluster settings."""
         self._load_ppl_queries()
         self._configure_calcite()
+        self._start_metrics_collector()
 
     def _load_ppl_queries(self):
         """Load PPL query files from configured directory with exclusion patterns."""
@@ -144,6 +152,18 @@ class OpenSearchPPLUser(HttpUser):
                 f"Calcite plugin setting mismatch: expected '{expected_value}', got '{current_value}'. "
                 f"Set calcite.enforce = true in config.toml to auto-update."
             )
+
+    def _start_metrics_collector(self):
+        """Start the metrics collector (only once, from first user)."""
+        global metrics_collector, metrics_collector_started
+
+        if metrics_collector_started:
+            return
+
+        metrics_collector_started = True
+        metrics_collector = ClusterMetricsCollector(self.client, CONFIG, db_manager.run_id)
+        metrics_collector.init_metrics()
+        metrics_collector.start()
 
     wait_time = between(1, 3)
 

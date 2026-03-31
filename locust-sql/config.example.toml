@@ -29,7 +29,7 @@ method = "database"
 file = "run_ids.txt"
 
 [otel]
-# Enable OpenTelemetry distributed tracing
+# Enable OpenTelemetry distributed tracing and metrics
 enabled = false
 # Directory for OTEL output files (NDJSON format)
 output_dir = "otel_output"
@@ -38,3 +38,15 @@ service_name = "locust-ppl-load-test"
 service_version = "0.1.0"
 # Auto-instrument httpx for HTTP-level spans
 instrument_httpx = true
+
+[otel.metrics]
+# Enable metrics collection
+enabled = true
+# Collection interval in seconds
+interval = 5.0
+# Collect thread pool statistics (active, queue, rejected)
+collect_thread_pools = true
+# Collect JVM metrics (heap memory)
+collect_jvm = true
+# Collect OS metrics (CPU, memory, disk)
+collect_os = true

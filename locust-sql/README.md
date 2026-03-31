@@ -77,11 +77,18 @@ instrument_httpx = true
 - `file`: Only used when `method = "file"` - specifies the filename for run tracking
 
 #### `[otel]` (Optional)
-- `enabled`: Enable OpenTelemetry distributed tracing (`true` or `false`)
-- `output_dir`: Directory where trace files are written (NDJSON format)
+- `enabled`: Enable OpenTelemetry distributed tracing and metrics (`true` or `false`)
+- `output_dir`: Directory where trace and metric files are written (NDJSON format)
 - `service_name`: Service identifier in traces
 - `service_version`: Service version in traces
 - `instrument_httpx`: Auto-instrument httpx for HTTP-level spans (`true` or `false`)
+
+#### `[otel.metrics]` (Optional)
+- `enabled`: Enable metrics collection (`true` or `false`)
+- `interval`: Collection interval in seconds (default: 5.0)
+- `collect_thread_pools`: Collect thread pool statistics (`true` or `false`)
+- `collect_jvm`: Collect JVM metrics like heap memory (`true` or `false`)
+- `collect_os`: Collect OS metrics like CPU, memory, disk (`true` or `false`)
 
 ## Database Schema
 
@@ -206,16 +213,87 @@ jq 'select(.status.code == "ERROR")' otel_output/traces_*.ndjson
 jq -r '.duration_ms' otel_output/traces_*.ndjson | sort -n | awk '{a[NR]=$0} END {print a[int(NR*0.95)]}'
 ```
 
+### Metrics Collection
+
+When `otel.metrics.enabled = true`, the load tester collects cluster metrics in the background and exports them to `metrics_*.ndjson`.
+
+#### Metrics File Format
+
+Each line is a single metric reading:
+
+```json
+{
+  "timestamp": "2026-03-31T10:15:30.123456Z",
+  "metric": "opensearch.threadpool.active",
+  "value": 5,
+  "labels": {
+    "node": "opensearch-node-1",
+    "pool": "sql-worker",
+    "run_id": "uuid-of-run"
+  }
+}
+```
+
+#### Collected Metrics
+
+**Thread Pool Metrics:**
+- `opensearch.threadpool.active` - Active threads in pool
+- `opensearch.threadpool.queue` - Queued tasks
+- `opensearch.threadpool.rejected` - Rejected tasks
+
+**JVM Metrics:**
+- `opensearch.jvm.heap.used_bytes` - Heap memory used
+- `opensearch.jvm.heap.max_bytes` - Maximum heap memory
+- `opensearch.jvm.heap.percent` - Heap utilization percentage
+
+**OS Metrics:**
+- `opensearch.os.cpu.percent` - CPU usage percentage
+- `opensearch.os.mem.used_bytes` - OS memory used
+- `opensearch.os.mem.total_bytes` - Total OS memory
+- `opensearch.os.mem.percent` - Memory utilization percentage
+
+**Disk Metrics:**
+- `opensearch.fs.total_bytes` - Total disk space
+- `opensearch.fs.available_bytes` - Available disk space
+- `opensearch.fs.percent` - Disk utilization percentage
+
+#### Analyzing Metrics
+
+```bash
+# Get average CPU usage
+jq -r 'select(.metric == "opensearch.os.cpu.percent") | .value' otel_output/metrics_*.ndjson | \
+  awk '{sum+=$1; count++} END {print sum/count}'
+
+# Find SQL thread pool queue spikes
+jq 'select(.metric == "opensearch.threadpool.queue" and .labels.pool | contains("sql")) | select(.value > 10)' \
+  otel_output/metrics_*.ndjson
+
+# Track heap usage over time
+jq -r 'select(.metric == "opensearch.jvm.heap.percent") | [.timestamp, .labels.node, .value] | @tsv' \
+  otel_output/metrics_*.ndjson
+
+# Get thread pool stats for a specific pool
+jq 'select(.labels.pool == "sql-worker")' otel_output/metrics_*.ndjson | \
+  jq -s 'group_by(.metric) | map({metric: .[0].metric, avg: (map(.value) | add / length)})'
+```
+
 ### Ingesting to Observability Backends
 
 The NDJSON format can be directly ingested into various backends:
 
 **OpenSearch/Elasticsearch:**
 ```bash
-# Bulk ingest traces (create index with appropriate mappings first)
+# Bulk ingest traces
 cat otel_output/traces_*.ndjson | \
   jq -c '. as $doc | {"index": {}}, $doc' | \
   curl -X POST "localhost:9200/traces/_bulk" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @-
+
+# Bulk ingest metrics
+cat otel_output/metrics_*.ndjson | \
+  jq -c '. as $doc | {"index": {}}, $doc' | \
+  curl -X POST "localhost:9200/metrics/_bulk" \
   -H "Content-Type: application/x-ndjson" \
   --data-binary @-
 ```
@@ -223,5 +301,6 @@ cat otel_output/traces_*.ndjson | \
 **Other backends:**
 - **Jaeger**: Convert to Jaeger JSON format and import
 - **Grafana Tempo**: Use the traces API to push spans
+- **Prometheus**: Convert metrics to Prometheus exposition format
 - **Custom analysis**: Process with Python/pandas for custom analytics
 ```
