@@ -42,6 +42,17 @@ exclude_patterns = ["range_auto_date", "headless"]
 method = "database"
 # Only used if method = "file"
 file = "run_ids.txt"
+
+[otel]
+# Enable OpenTelemetry tracing (optional)
+enabled = false
+# Directory for OTEL output files
+output_dir = "otel_output"
+# Service metadata
+service_name = "locust-ppl-load-test"
+service_version = "0.1.0"
+# Auto-instrument httpx for HTTP-level spans
+instrument_httpx = true
 ```
 
 ### Configuration Options
@@ -64,6 +75,13 @@ file = "run_ids.txt"
   - `"database"` (recommended): Stores run metadata in the database with start/end times, status, and config snapshot. Each run gets a unique UUID and can be queried from the `runs` table.
   - `"file"`: Legacy mode that appends run information to a text file
 - `file`: Only used when `method = "file"` - specifies the filename for run tracking
+
+#### `[otel]` (Optional)
+- `enabled`: Enable OpenTelemetry distributed tracing (`true` or `false`)
+- `output_dir`: Directory where trace files are written (NDJSON format)
+- `service_name`: Service identifier in traces
+- `service_version`: Service version in traces
+- `instrument_httpx`: Auto-instrument httpx for HTTP-level spans (`true` or `false`)
 
 ## Database Schema
 
@@ -126,4 +144,84 @@ LEFT JOIN response_times rt ON r.run_id = rt.run_id
 GROUP BY r.run_id
 ORDER BY r.start_time DESC
 LIMIT 10;
+```
+
+## OpenTelemetry Tracing (Optional)
+
+When `otel.enabled = true`, the load tester will export distributed traces to NDJSON files in the configured output directory.
+
+### Trace File Format
+
+Each line in `traces_*.ndjson` is a JSON object representing a completed span.
+
+**Timestamps** are in ISO 8601 format with nanosecond precision for OpenSearch compatibility:
+
+```json
+{
+  "trace_id": "1234567890abcdef1234567890abcdef",
+  "span_id": "1234567890abcdef",
+  "parent_span_id": null,
+  "name": "ppl.query.execute",
+  "start_time": "2024-03-31T17:54:04.000000000Z",
+  "end_time": "2024-03-31T17:54:04.123000000Z",
+  "duration_ns": 123000000,
+  "duration_ms": 123.0,
+  "status": {
+    "code": "OK",
+    "description": null
+  },
+  "attributes": {
+    "query.name": "search_with_aggregation",
+    "query.text": "source=logs | stats count() by level",
+    "calcite.enabled": true,
+    "run.id": "uuid-of-run",
+    "http.status_code": 200,
+    "response.time_ms": 123.45,
+    "response.size_bytes": 1234
+  },
+  "events": [
+    {"name": "query.sent", "timestamp": "2024-03-31T17:54:04.001000000Z", "attributes": {}},
+    {"name": "query.completed", "timestamp": "2024-03-31T17:54:04.123000000Z", "attributes": {}}
+  ]
+}
+```
+
+### Analyzing Traces
+
+You can use standard command-line tools to analyze traces:
+
+```bash
+# Find slow queries
+jq 'select(.duration_ms > 500)' otel_output/traces_*.ndjson
+
+# Get average latency per query
+jq -r '[.attributes."query.name", .duration_ms] | @tsv' otel_output/traces_*.ndjson | \
+  awk '{sum[$1]+=$2; count[$1]++} END {for(q in sum) print q, sum[q]/count[q]}' | \
+  sort -k2 -rn
+
+# Find all errors
+jq 'select(.status.code == "ERROR")' otel_output/traces_*.ndjson
+
+# Get P95 latency
+jq -r '.duration_ms' otel_output/traces_*.ndjson | sort -n | awk '{a[NR]=$0} END {print a[int(NR*0.95)]}'
+```
+
+### Ingesting to Observability Backends
+
+The NDJSON format can be directly ingested into various backends:
+
+**OpenSearch/Elasticsearch:**
+```bash
+# Bulk ingest traces (create index with appropriate mappings first)
+cat otel_output/traces_*.ndjson | \
+  jq -c '. as $doc | {"index": {}}, $doc' | \
+  curl -X POST "localhost:9200/traces/_bulk" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @-
+```
+
+**Other backends:**
+- **Jaeger**: Convert to Jaeger JSON format and import
+- **Grafana Tempo**: Use the traces API to push spans
+- **Custom analysis**: Process with Python/pandas for custom analytics
 ```

@@ -2,12 +2,18 @@ import random
 from pathlib import Path
 
 from locust import HttpUser, between, events, task
+from opentelemetry import trace
 
 from database import DatabaseManager, load_config
+from otel_tracing import OTELTracingManager
 
 # Global configuration and database manager
 CONFIG = load_config()
 db_manager = DatabaseManager(CONFIG)
+
+# OTEL tracing manager (if enabled)
+otel_manager = OTELTracingManager(CONFIG, db_manager.run_id)
+otel_manager.init_tracing()
 
 
 def record_response(
@@ -44,6 +50,7 @@ def on_quitting(_environment, **_kwargs):
     """Handle locust shutdown to mark run as completed."""
     db_manager.flush_remaining()
     db_manager.end_run("completed")
+    otel_manager.shutdown()
 
 
 # Initialize database and start run tracking
@@ -187,6 +194,11 @@ class OpenSearchPPLUser(HttpUser):
         """Execute a random PPL query against the cluster."""
         query_name, query = self._select_random_query()
 
+        # Create OTEL span for this query
+        span = otel_manager.create_query_span(
+            query_name, query, CONFIG["calcite"]["enabled"]
+        )
+
         with self.client.post(
             "/_plugins/_ppl",
             json={"query": query},
@@ -195,6 +207,31 @@ class OpenSearchPPLUser(HttpUser):
             catch_response=True,
         ) as response:
             try:
+                if span:
+                    span.add_event("query.sent")
+
                 self._handle_response(response)
+
+                # Record response details on span
+                if span:
+                    response_time_ms = response.elapsed.total_seconds() * 1000
+                    response_size = len(response.content) if response.content else 0
+                    error_msg = None if response.status_code == 200 else self._parse_error_response(response)
+
+                    otel_manager.record_query_response(
+                        span,
+                        response.status_code,
+                        response_time_ms,
+                        response_size,
+                        error_msg,
+                    )
+                    span.add_event("query.completed")
+
             except Exception as e:
+                if span:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                    span.record_exception(e)
                 response.failure(f"Request failed: {str(e)}")
+            finally:
+                if span:
+                    span.end()

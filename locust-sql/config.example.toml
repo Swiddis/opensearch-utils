@@ -27,3 +27,14 @@ exclude_patterns = ["range_auto_date", "headless"]
 method = "database"
 # Only used if method = "file"
 file = "run_ids.txt"
+
+[otel]
+# Enable OpenTelemetry distributed tracing
+enabled = false
+# Directory for OTEL output files (NDJSON format)
+output_dir = "otel_output"
+# Service metadata
+service_name = "locust-ppl-load-test"
+service_version = "0.1.0"
+# Auto-instrument httpx for HTTP-level spans
+instrument_httpx = true

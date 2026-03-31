@@ -14,3 +14,4 @@ wheels/
 config.toml
 run_ids.txt
 etc/
+otel_output/
