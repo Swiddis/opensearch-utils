@@ -7,7 +7,6 @@ import click
 import requests
 from termcolor import cprint
 
-
 MIN_HASH_LENGTH = 7
 LABEL_CATEGORIES = {
     "breaking": "Breaking",
@@ -21,6 +20,8 @@ LABEL_CATEGORIES = {
 }
 LABEL_ALIASES = {
     "bugfix": "bug",
+    "feature": "enhancement",
+    "testing": "infrastructure",
 }
 
 
@@ -78,7 +79,7 @@ class GitHubClient:
                     yield pr
                     targets.remove(str(pr["number"]))
             if len(result) < page_size:
-                return # Out of pages
+                return  # Out of pages
 
 
 def validate_commit_hash(_ctx, _param, commit_hash: str):
@@ -111,10 +112,10 @@ def get_commit_pr(commit) -> str | None:
 
 
 def extract_category(labels):
-    labels = [label["name"].lower() for label in labels]
-    labels = [LABEL_ALIASES.get(label, label) for label in labels]
+    llabels = [label["name"].lower() for label in labels]
+    alabels = [LABEL_ALIASES.get(label, label) for label in llabels]
     for category in LABEL_CATEGORIES:
-        if category in labels:
+        if category in alabels:
             return category
     return "unknown"
 
@@ -125,7 +126,7 @@ def assemble_contrib_data(pull_req):
         "author": pull_req["user"]["login"],
         "title": pull_req["title"],
         "category": extract_category(pull_req["labels"]),
-        "link": pull_req["html_url"]
+        "link": pull_req["html_url"],
     }
 
 
@@ -147,7 +148,11 @@ def make_notes(contrib_data: dict, version: str):
         if len(categories[lcat]) == 0 or lcat == "skip-changelog":
             continue
         if lcat == "breaking":
-            cprint("WARN: there are breaking changes. These can only occur in major releases.", "yellow", file=sys.stderr)
+            cprint(
+                "WARN: there are breaking changes. These can only occur in major releases.",
+                "yellow",
+                file=sys.stderr,
+            )
         result += f"### {title}\n"
         for pull_req in sorted(
             categories[lcat], key=lambda p: int(p["pull_req"]), reverse=True
@@ -157,36 +162,48 @@ def make_notes(contrib_data: dict, version: str):
                 if not pull_req["title"].startswith("[")
                 else pull_req["title"].split("]", maxsplit=1)[1]
             )
-            result += f"* {title.strip()} ([#{pull_req['pull_req']}]({pull_req['link']}))\n"
+            result += (
+                f"* {title.strip()} ([#{pull_req['pull_req']}]({pull_req['link']}))\n"
+            )
         result += "\n"
     return result[:-2]  # Remove extra trailing newlines
 
 
-@click.command(name='make_release')
+@click.command(name="make_release")
 @click.option(
-    "--repo", "-r",
+    "--repo",
+    "-r",
     "repo_parts",
     required=True,
     help="The repository URL to make a release for",
     callback=parse_repo_url,
 )
 @click.option(
-    "--base", "-b",
+    "--base",
+    "-b",
     required=True,
     help="The base commit. This is the starting point for the release's changes, and *is not* included in the changelog",
     callback=validate_commit_hash,
 )
 @click.option(
-    "--head", "-h",
+    "--head",
+    "-h",
     required=True,
     help="The head commit. This is the most recent commit included in the release, and *is* included in the changelog",
     callback=validate_commit_hash,
 )
 @click.option(
-    "--version", "-v", help="The version to make the release notes for", default="[VERSION]"
+    "--version",
+    "-v",
+    help="The version to make the release notes for",
+    default="[VERSION]",
 )
-@click.option("--quiet", help="Don't send progress output on STDERR", is_flag=True, default=False)
-def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str, quiet: bool):
+@click.option(
+    "--quiet", help="Don't send progress output on STDERR", is_flag=True, default=False
+)
+def make_release(
+    repo_parts: tuple[str, str], base: str, head: str, version: str, quiet: bool
+):
     owner, repo = repo_parts
     client = GitHubClient(owner, repo)
 
@@ -199,25 +216,32 @@ def make_release(repo_parts: tuple[str, str], base: str, head: str, version: str
     commits = client.fetch_commits(base, head)
 
     if not quiet:
-        print(f"Found {len(commits)} commits, searching for associated PRs", file=sys.stderr)
+        print(
+            f"Found {len(commits)} commits, searching for associated PRs",
+            file=sys.stderr,
+        )
 
     pr_nums = [get_commit_pr(commit) for commit in commits]
     pr_nums = [pc for pc in pr_nums if pc]
     unique_prs = set(pr_nums)
 
-    results = [
-        assemble_contrib_data(pr)
-        for pr in client.fetch_merged_prs(unique_prs)
-    ]
+    results = [assemble_contrib_data(pr) for pr in client.fetch_merged_prs(unique_prs)]
 
     if not quiet:
         print(f"Successfully found {len(results)} associated PRs", file=sys.stderr)
         if len(results) < len(unique_prs):
-            cprint(f"WARN: Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}", "yellow", file=sys.stderr)
+            cprint(
+                f"WARN: Unable to find PRs: {unique_prs - set(r["pull_req"] for r in results)}",
+                "yellow",
+                file=sys.stderr,
+            )
         if len(unique_prs) < len(pr_nums):
             counter = Counter(pr_nums)
             multi_keys = set(k for k, v in counter.items() if v > 1)
-            print(f"Some PRs were referenced multiple times and deduped: {multi_keys}", file=sys.stderr)
+            print(
+                f"Some PRs were referenced multiple times and deduped: {multi_keys}",
+                file=sys.stderr,
+            )
         print("Generating notes", file=sys.stderr)
 
     notes = make_notes(results, version)
