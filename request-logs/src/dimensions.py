@@ -4,7 +4,7 @@ Manages dimension data with realistic reuse patterns.
 """
 
 from dataclasses import dataclass, asdict
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time, timedelta, timezone
 from typing import List, Dict, Any, Optional
 import random
 import uuid
@@ -262,7 +262,7 @@ class DimensionManager:
             service_name=service_name,
             service_version=f"{random.randint(1, 3)}.{random.randint(0, 20)}.{random.randint(0, 10)}",
             cluster_name=f"{service_name}-{environment}-cluster",
-            effective_date=datetime.now().strftime("%Y-%m-%d"),
+            effective_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             expiration_date=None,
             is_current=True,
         )

@@ -7,7 +7,7 @@ Follows Kimball dimensional modeling with realistic dimension reuse.
 import time
 import sys
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from opensearchpy.helpers import bulk
 
 from src.dimensions import DimensionManager
@@ -115,8 +115,8 @@ def _backfill_historical_data(
     else:
         print(f"\nBackfilling {backfill_minutes} minutes of historical data...")
 
-    backfill_start_time = datetime.now() - timedelta(minutes=backfill_minutes)
-    backfill_end_time = datetime.now()
+    backfill_start_time = datetime.now(timezone.utc) - timedelta(minutes=backfill_minutes)
+    backfill_end_time = datetime.now(timezone.utc)
     base_backfill_records = int(rate_per_second * backfill_minutes * 60)
 
     if dynamic_rate:
@@ -234,7 +234,7 @@ def _generate_realtime_logs(
             batches_per_second = current_rate / batch_size
             sleep_time = 1.0 / batches_per_second if batches_per_second > 0 else 0
 
-            batch_timestamp = datetime.now()
+            batch_timestamp = datetime.now(timezone.utc)
             for _ in range(batch_size):
                 if target_total is not None and total_generated >= target_total:
                     break
