@@ -1,3 +1,4 @@
+use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::PathBuf;
@@ -72,13 +73,13 @@ struct LogParser {
 impl LogParser {
     fn new() -> Self {
         Self {
-            // Basic log format: [timestamp][severity][class][node_id] - just headers
+            // Basic log format: [timestamp][severity][class][node_id] or [timestamp][severity][class] [node_id]
             basic_regex: Regex::new(
-                r"^\[(?P<timestamp>[^\]]+)\]\[(?P<severity>[^\]]+)\]\[(?P<class>[^\]]+)\]\[(?P<node_id>[^\]]+)\]\s*"
+                r"^\[(?P<timestamp>[^\]]+)\]\[(?P<severity>[^\]]+)\]\[(?P<class>[^\]]+)\]\s*\[(?P<node_id>[^\]]+)\]\s*"
             ).unwrap(),
             // HTTP request log format (first line only): [timestamp][severity][class][node_id] METHOD URL PARAMS STATUS_CODE STATUS_TEXT BYTES LATENCY_MS
             http_regex: Regex::new(
-                r"^\[(?P<timestamp>[^\]]+)\]\[(?P<severity>[^\]]+)\]\[(?P<class>[^\]]+)\]\[(?P<node_id>[^\]]+)\]\s+(?P<request_method>\w+)\s+(?P<request_url>\S+)\s+(?P<request_parameters>\S+)\s+(?P<response_status_code>\d+)\s+(?P<response_status_text>\w+)\s+(?P<response_bytes>\d+)\s+(?P<response_latency_ms>\d+)"
+                r"^\[(?P<timestamp>[^\]]+)\]\[(?P<severity>[^\]]+)\]\[(?P<class>[^\]]+)\]\s*\[(?P<node_id>[^\]]+)\]\s+(?P<request_method>\w+)\s+(?P<request_url>\S+)\s+(?P<request_parameters>\S+)\s+(?P<response_status_code>\d+)\s+(?P<response_status_text>\w+)\s+(?P<response_bytes>\d+)\s+(?P<response_latency_ms>\d+)"
             ).unwrap(),
             // Exception pattern: captures exception type and message
             exception_regex: Regex::new(
@@ -169,7 +170,8 @@ impl LogParser {
         }
 
         // Extract exception details
-        let (exception_type, exception_message, exception_trace) = self.extract_exception_details(body);
+        let (exception_type, exception_message, exception_trace) =
+            self.extract_exception_details(body);
 
         // Only return as exception log if we found exception details
         if exception_type.is_none() {
@@ -227,16 +229,21 @@ impl LogParser {
         })
     }
 
-    fn extract_exception_details(&self, body: &str) -> (Option<String>, Option<String>, Option<String>) {
+    fn extract_exception_details(
+        &self,
+        body: &str,
+    ) -> (Option<String>, Option<String>, Option<String>) {
         // Find the first exception type and message
-        let (exception_type, exception_message) = if let Some(caps) = self.exception_regex.captures(body) {
-            (
-                caps.name("exception_type").map(|m| m.as_str().to_string()),
-                caps.name("exception_message").map(|m| m.as_str().to_string()),
-            )
-        } else {
-            (None, None)
-        };
+        let (exception_type, exception_message) =
+            if let Some(caps) = self.exception_regex.captures(body) {
+                (
+                    caps.name("exception_type").map(|m| m.as_str().to_string()),
+                    caps.name("exception_message")
+                        .map(|m| m.as_str().to_string()),
+                )
+            } else {
+                (None, None)
+            };
 
         // Extract stack trace (all lines starting with tab and "at ", plus "Caused by" lines)
         let trace_lines: Vec<&str> = body
@@ -401,6 +408,16 @@ fn merge_receivers<'s>(
     recs.pop().unwrap()
 }
 
+/// Expand tilde (~) to home directory path
+fn expand_tilde(pattern: &str) -> String {
+    if pattern.starts_with("~/") {
+        if let Some(home) = env::var_os("HOME") {
+            return pattern.replacen("~", &home.to_string_lossy(), 1);
+        }
+    }
+    pattern.to_string()
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -412,7 +429,8 @@ fn main() {
     thread::scope(|s| {
         let mut receivers = Vec::new();
         for pattern in &args.patterns {
-            if let Ok(paths) = glob(pattern) {
+            let expanded = expand_tilde(pattern);
+            if let Ok(paths) = glob(&expanded) {
                 receivers.extend(collect_receivers(paths, s, &parser, args.json));
             }
         }
@@ -478,10 +496,22 @@ javax.net.ssl.SSLHandshakeException: Empty client certificate chain
         assert_eq!(entry.severity, "ERROR");
         assert_eq!(entry.class, "o.o.t.n.s.Transport");
         assert_eq!(entry.node_id, "abc123node456");
-        assert_eq!(entry.exception_type, Some("javax.net.ssl.SSLHandshakeException".to_string()));
-        assert_eq!(entry.exception_message, Some("Empty client certificate chain".to_string()));
+        assert_eq!(
+            entry.exception_type,
+            Some("javax.net.ssl.SSLHandshakeException".to_string())
+        );
+        assert_eq!(
+            entry.exception_message,
+            Some("Empty client certificate chain".to_string())
+        );
         assert!(entry.exception_trace.is_some());
-        assert!(entry.exception_trace.as_ref().unwrap().contains("at java.base/sun.security.ssl.Alert.createSSLException"));
+        assert!(
+            entry
+                .exception_trace
+                .as_ref()
+                .unwrap()
+                .contains("at java.base/sun.security.ssl.Alert.createSSLException")
+        );
         assert!(entry.request_method.is_none());
     }
 
@@ -513,8 +543,14 @@ Caused by: javax.net.ssl.SSLHandshakeException: Empty cert
 
         let entry = parser.parse(log).expect("Failed to parse exception log");
 
-        assert_eq!(entry.exception_type, Some("io.netty.handler.codec.DecoderException".to_string()));
-        assert_eq!(entry.exception_message, Some("javax.net.ssl.SSLHandshakeException: Empty cert".to_string()));
+        assert_eq!(
+            entry.exception_type,
+            Some("io.netty.handler.codec.DecoderException".to_string())
+        );
+        assert_eq!(
+            entry.exception_message,
+            Some("javax.net.ssl.SSLHandshakeException: Empty cert".to_string())
+        );
         assert!(entry.exception_trace.is_some());
         let trace = entry.exception_trace.unwrap();
         assert!(trace.contains("at io.netty.handler.codec.ByteToMessageDecoder.callDecode"));
@@ -536,8 +572,12 @@ Caused by: javax.net.ssl.SSLHandshakeException: Empty cert
 
     #[test]
     fn test_is_log_line_start() {
-        assert!(is_log_line_start("[2025-01-01T10:00:00,123][INFO ][test][node] message"));
-        assert!(is_log_line_start("[2025-12-18T15:00:00,052][ERROR][class][node] error"));
+        assert!(is_log_line_start(
+            "[2025-01-01T10:00:00,123][INFO ][test][node] message"
+        ));
+        assert!(is_log_line_start(
+            "[2025-12-18T15:00:00,052][ERROR][class][node] error"
+        ));
         assert!(!is_log_line_start("\tat java.base/something"));
         assert!(!is_log_line_start("  continuation line"));
         assert!(!is_log_line_start("regular text"));
@@ -570,20 +610,26 @@ Caused by: javax.net.ssl.SSLHandshakeException: Empty cert
         let parser = LogParser::new();
 
         // Test HTTP log type
-        let http_log = "[2025-01-01T10:00:00,123][INFO ][o.o.n.c.logger][node] GET / - 200 OK 100 5";
+        let http_log =
+            "[2025-01-01T10:00:00,123][INFO ][o.o.n.c.logger][node] GET / - 200 OK 100 5";
         let http_entry = parser.parse(http_log).expect("Failed to parse HTTP log");
         let http_json = serde_json::to_string(&http_entry).expect("Failed to serialize");
         assert!(http_json.contains("\"log_type\":\"http\""));
 
         // Test exception log type
         let exc_log = "[2025-01-01T10:00:00,123][ERROR][o.o.t.n.s.Transport][node] Exception: java.lang.RuntimeException: Test\n\tat test.method(Test.java:10)";
-        let exc_entry = parser.parse(exc_log).expect("Failed to parse exception log");
+        let exc_entry = parser
+            .parse(exc_log)
+            .expect("Failed to parse exception log");
         let exc_json = serde_json::to_string(&exc_entry).expect("Failed to serialize");
         assert!(exc_json.contains("\"log_type\":\"exception\""));
 
         // Test generic log type
-        let generic_log = "[2025-01-01T10:00:00,123][INFO ][c.a.a.c.MetricClient][node] regular message";
-        let generic_entry = parser.parse(generic_log).expect("Failed to parse generic log");
+        let generic_log =
+            "[2025-01-01T10:00:00,123][INFO ][c.a.a.c.MetricClient][node] regular message";
+        let generic_entry = parser
+            .parse(generic_log)
+            .expect("Failed to parse generic log");
         let generic_json = serde_json::to_string(&generic_entry).expect("Failed to serialize");
         assert!(generic_json.contains("\"log_type\":\"generic\""));
     }
