@@ -174,9 +174,7 @@ impl LogParser {
             self.extract_exception_details(body);
 
         // Only return as exception log if we found exception details
-        if exception_type.is_none() {
-            return None;
-        }
+        exception_type.as_ref()?;
 
         Some(LogEntry {
             timestamp: caps.name("timestamp")?.as_str().to_string(),
@@ -304,10 +302,10 @@ fn send_buf(
     json_mode: bool,
 ) -> Result<(), SendError<String>> {
     if !buf.is_empty() {
-        if let Some(entry) = parser.parse(buf) {
-            if let Some(formatted) = format_entry(&entry, json_mode) {
-                tx.send(formatted)?;
-            }
+        if let Some(entry) = parser.parse(buf)
+            && let Some(formatted) = format_entry(&entry, json_mode)
+        {
+            tx.send(formatted)?;
         }
         buf.clear();
     }
@@ -410,10 +408,10 @@ fn merge_receivers<'s>(
 
 /// Expand tilde (~) to home directory path
 fn expand_tilde(pattern: &str) -> String {
-    if pattern.starts_with("~/") {
-        if let Some(home) = env::var_os("HOME") {
-            return pattern.replacen("~", &home.to_string_lossy(), 1);
-        }
+    if pattern.starts_with("~/")
+        && let Some(home) = env::var_os("HOME")
+    {
+        return pattern.replacen("~", &home.to_string_lossy(), 1);
     }
     pattern.to_string()
 }
