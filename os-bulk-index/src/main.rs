@@ -84,6 +84,10 @@ struct Cli {
     /// Watch mode: monitor cluster and re-run indexing on restart
     #[arg(long)]
     watch: bool,
+
+    /// Fail on any item-level indexing error (excluding retryable 429s)
+    #[arg(long)]
+    fail_on_error: bool,
 }
 
 #[tokio::main]
@@ -341,6 +345,7 @@ async fn process_file(
                 args.username.as_deref(),
                 args.password.as_deref(),
                 args.live,
+                args.fail_on_error,
             ));
 
             // When we hit our limit, start going through the queue
@@ -363,6 +368,7 @@ async fn process_file(
             args.username.as_deref(),
             args.password.as_deref(),
             args.live,
+            args.fail_on_error,
         ));
     }
 
@@ -437,6 +443,7 @@ fn spawn_upload_task(
     username: Option<&str>,
     password: Option<&str>,
     live: bool,
+    fail_on_error: bool,
 ) -> tokio::task::JoinHandle<Result<()>> {
     let bulk_url = format!("{}/_bulk", endpoint);
     let index = index.to_string();
@@ -475,7 +482,26 @@ fn spawn_upload_task(
                 continue;
             }
 
-            response.error_for_status().context("Request failed")?;
+            let response = response.error_for_status().context("Request failed")?;
+
+            if fail_on_error {
+                #[derive(Deserialize)]
+                struct BulkResponse {
+                    errors: bool,
+                    items: Vec<Value>,
+                }
+                let bulk_resp: BulkResponse = response.json().await.context("Failed to parse bulk response")?;
+                if bulk_resp.errors {
+                    let errors: Vec<String> = bulk_resp.items.iter()
+                        .filter_map(|item| {
+                            item.as_object()?.values().next()?
+                                .get("error").and_then(|e| serde_json::to_string_pretty(e).ok())
+                        })
+                        .take(5)
+                        .collect();
+                    anyhow::bail!("Bulk indexing errors:\n{}", errors.join("\n"));
+                }
+            }
             break;
         }
 
