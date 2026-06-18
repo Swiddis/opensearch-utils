@@ -74,12 +74,21 @@ class ThreadPoolMetrics:
 
 class OpenSearchPPLUser(HttpUser):
     queries = {}
+    host = CONFIG["opensearch"]["url"]
 
     def on_start(self):
         """Initialize user session: load queries and configure cluster settings."""
+        self._setup_auth()
         self._load_ppl_queries()
         self._configure_calcite()
         self._start_metrics_collector()
+
+    def _setup_auth(self):
+        """Configure HTTP basic auth if credentials are provided."""
+        username = CONFIG["opensearch"].get("username", "")
+        password = CONFIG["opensearch"].get("password", "")
+        if username and password:
+            self.client.auth = (username, password)
 
     def _load_ppl_queries(self):
         """Load PPL query files from configured directory with exclusion patterns."""
@@ -97,10 +106,29 @@ class OpenSearchPPLUser(HttpUser):
                 continue
 
             with open(ppl_file, "r") as f:
-                query = f.read().strip()
+                query = (
+                    f.read().strip().replace("source = big5", "source = big5_parquet")
+                )
+                query = self._inject_time_filter(query)
                 OpenSearchPPLUser.queries[query_name] = query
 
         print(f"Loaded {len(OpenSearchPPLUser.queries)} PPL queries from {ppl_dir}")
+
+    def _inject_time_filter(self, query):
+        """Inject time filter after source clause if time_range is configured."""
+        import re
+
+        if "time_range" not in CONFIG:
+            return query
+
+        start = CONFIG["time_range"]["start"]
+        end = CONFIG["time_range"]["end"]
+        time_filter = f'`@timestamp` >= "{start}" AND `@timestamp` <= "{end}"'
+
+        # Replace source=idx with source=idx | where <time_filter>
+        return re.sub(
+            r"(source\s*=\s*\w+)", rf"\1 | where {time_filter}", query, count=1
+        )
 
     def _get_cluster_calcite_setting(self):
         """Retrieve the current Calcite plugin setting from the cluster."""
@@ -161,7 +189,9 @@ class OpenSearchPPLUser(HttpUser):
             return
 
         metrics_collector_started = True
-        metrics_collector = ClusterMetricsCollector(self.client, CONFIG, db_manager.run_id)
+        metrics_collector = ClusterMetricsCollector(
+            self.client, CONFIG, db_manager.run_id
+        )
         metrics_collector.init_metrics()
         metrics_collector.start()
 
@@ -236,7 +266,11 @@ class OpenSearchPPLUser(HttpUser):
                 if span:
                     response_time_ms = response.elapsed.total_seconds() * 1000
                     response_size = len(response.content) if response.content else 0
-                    error_msg = None if response.status_code == 200 else self._parse_error_response(response)
+                    error_msg = (
+                        None
+                        if response.status_code == 200
+                        else self._parse_error_response(response)
+                    )
 
                     otel_manager.record_query_response(
                         span,
