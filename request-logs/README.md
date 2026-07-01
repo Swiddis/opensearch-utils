@@ -2,6 +2,8 @@
 
 Tools for working with dimensional data in OpenSearch - generating Kimball-style dimensional logs and creating enrichment tables for testing analytics queries.
 
+If you just want some sample data without any fanciness, try `generate_logs.standalone.py`.
+
 ## Features
 
 - **Dimensional Log Generation**: Creates realistic request logs following Kimball star schema methodology
