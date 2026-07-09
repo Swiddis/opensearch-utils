@@ -1,16 +1,18 @@
 use std::env;
 use std::fs::File;
-use std::io::{self, BufRead, BufWriter, Write};
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{SendError, SyncSender, sync_channel};
 use std::thread;
 
 use clap::Parser;
 use colored::{ColoredString, Colorize};
+use flate2::read::GzDecoder;
 use glob::{Paths, glob};
 use itertools::merge;
 use regex::Regex;
 use serde::Serialize;
+use zstd::Decoder as ZstdDecoder;
 
 /// Max log lines to buffer in-memory per channel. 2k capacity ~ 1M memory per file.
 const CHAN_CAPACITY: usize = 2048;
@@ -312,15 +314,36 @@ fn send_buf(
     Ok(())
 }
 
+/// Open a file and wrap it with appropriate decompressor based on file extension
+fn open_file_reader(path: &Path) -> io::Result<Box<dyn BufRead>> {
+    let file = File::open(path)?;
+
+    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+        match ext {
+            "gz" => {
+                let decoder = GzDecoder::new(file);
+                Ok(Box::new(BufReader::new(decoder)))
+            }
+            "zst" => {
+                let decoder = ZstdDecoder::new(file)?;
+                Ok(Box::new(BufReader::new(decoder)))
+            }
+            _ => Ok(Box::new(BufReader::new(file)))
+        }
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
 fn send_lines(
-    handle: File,
+    reader: Box<dyn BufRead>,
     tx: SyncSender<String>,
     parser: &LogParser,
     json_mode: bool,
 ) -> Result<(), SendError<String>> {
     let mut buf = String::new();
 
-    for line in io::BufReader::new(handle).lines().map_while(Result::ok) {
+    for line in reader.lines().map_while(Result::ok) {
         if is_log_line_start(&line) {
             send_buf(&mut buf, &tx, parser, json_mode)?;
         }
@@ -341,9 +364,9 @@ fn scan_log_lines<'s>(
 ) -> LogReceiver {
     let (tx, rx) = sync_channel(CHAN_CAPACITY);
     scope.spawn(move || {
-        match File::open(&file) {
-            Ok(handle) => {
-                let _ = send_lines(handle, tx, parser, json_mode);
+        match open_file_reader(&file) {
+            Ok(reader) => {
+                let _ = send_lines(reader, tx, parser, json_mode);
             }
             Err(err) => {
                 eprintln!("Unable to open {}: {err}", file.to_string_lossy());

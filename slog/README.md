@@ -8,6 +8,8 @@ and also some logs contain multi-line entries that get mangled by sorting.
 This CLI takes log file globs, prettifies them, and merges them, streaming the entries to stdout.
 It's highly parallelized, causing it to go faster than `wc` on my machine (albeit with more user CPU time).
 
+The tool automatically detects and decompresses `.gz` (gzip) and `.zst` (zstd) compressed log files based on file extension.
+
 Since I needed this for a specific log format, the `colorize` logic parses those logs.
 For other formats you may want to tweak this logic.
 For timestamp sorting, it assumes the log timestamp is the leftmost field.
@@ -43,6 +45,13 @@ Options:
       --json      Output logs as NDJSON
   -h, --help      Print help
 ```
+
+**Supported file formats:**
+- Plain text log files
+- `.gz` (gzip compressed)
+- `.zst` (zstd compressed)
+
+Compressed formats are automatically detected by file extension and decompressed on-the-fly.
 
 ## JSON Output Fields
 
