@@ -15,8 +15,10 @@ Clone & cd to this directory, then just install with Cargo:
 
 ## Usage
 
-This indexes the specified newline-delimited json file into an index, respecting the compression specified in the extension.
+This indexes the specified newline-delimited json file (or SQLite table) into an index, respecting the compression specified in the extension.
 Alternative endpoints and auth details are optional.
+
+### Indexing from a file
 
 ```bash
 $ bulk-index --help
@@ -55,6 +57,26 @@ Options:
           Query to filter documents during scan (JSON query DSL)
       --scroll-size <SCROLL_SIZE>
           Size of each scroll batch [default: 1000]
+      --sqlite-db <SQLITE_DB>
+          SQLite database path (alternative to --file)
+      --sqlite-table <SQLITE_TABLE>
+          Table name to read from SQLite database
   -h, --help
           Print help
 ```
+
+### Indexing from SQLite
+
+You can index directly from a SQLite database table:
+
+```bash
+bulk-index -i my-index --sqlite-db /path/to/database.db --sqlite-table my_table
+```
+
+This converts each row to a JSON document with column names as fields. SQLite types map naturally:
+- INTEGER/REAL → JSON numbers
+- TEXT → JSON strings (including timestamps, which are passed as-is)
+- BLOB → base64-encoded strings
+- NULL → JSON null
+
+The tool relies on OpenSearch's dynamic mapping to interpret field types. For timestamp fields, ensure your index has appropriate date format patterns configured.

@@ -44,6 +44,14 @@ struct Cli {
     #[arg(short, long)]
     file: Option<String>,
 
+    /// SQLite database path (alternative to --file)
+    #[arg(long)]
+    sqlite_db: Option<String>,
+
+    /// Table name to read from SQLite database
+    #[arg(long)]
+    sqlite_table: Option<String>,
+
     /// Maximum number of lines to read (optional, reads all if not specified)
     #[arg(short, long)]
     limit: Option<usize>,
@@ -295,7 +303,11 @@ async fn process_file(
     client: Client,
     semaphore: Arc<Semaphore>,
 ) -> Result<()> {
-    let reader = create_reader(args.file.as_deref())?;
+    let reader = create_reader(
+        args.file.as_deref(),
+        args.sqlite_db.as_deref(),
+        args.sqlite_table.as_deref(),
+    )?;
     let mut current_batch: Vec<(String, chrono::DateTime<Utc>)> =
         Vec::with_capacity(args.batch_size);
     let mut pending_handles = Vec::new();
