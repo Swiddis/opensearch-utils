@@ -1,4 +1,5 @@
 import random
+import threading
 from pathlib import Path
 
 from locust import HttpUser, between, events, task
@@ -11,6 +12,12 @@ from otel_metrics import ClusterMetricsCollector
 # Global configuration and database manager
 CONFIG = load_config()
 db_manager = DatabaseManager(CONFIG)
+
+# Slow query throttling
+slow_query_counter = 0
+slow_query_lock = threading.Lock()
+SLOW_QUERY_LIMIT = CONFIG.get("throttle", {}).get("limit", 0)  # 0 = disabled
+SLOW_QUERY_PATTERN = CONFIG.get("throttle", {}).get("pattern", None)
 
 # OTEL tracing manager (if enabled)
 otel_manager = OTELTracingManager(CONFIG, db_manager.run_id)
@@ -74,6 +81,8 @@ class ThreadPoolMetrics:
 
 class OpenSearchPPLUser(HttpUser):
     queries = {}
+    slow_queries = {}
+    fast_queries = {}
     host = CONFIG["opensearch"]["url"]
 
     def on_start(self):
@@ -112,7 +121,17 @@ class OpenSearchPPLUser(HttpUser):
                 query = self._inject_time_filter(query)
                 OpenSearchPPLUser.queries[query_name] = query
 
+                # Categorize as slow or fast based on pattern
+                if SLOW_QUERY_PATTERN and query_name.startswith(SLOW_QUERY_PATTERN):
+                    OpenSearchPPLUser.slow_queries[query_name] = query
+                else:
+                    OpenSearchPPLUser.fast_queries[query_name] = query
+
         print(f"Loaded {len(OpenSearchPPLUser.queries)} PPL queries from {ppl_dir}")
+        if SLOW_QUERY_LIMIT:
+            print(
+                f"  {len(OpenSearchPPLUser.slow_queries)} slow (pattern: {SLOW_QUERY_PATTERN}), {len(OpenSearchPPLUser.fast_queries)} fast, limit: {SLOW_QUERY_LIMIT}"
+            )
 
     def _inject_time_filter(self, query):
         """Inject time filter after source clause if time_range is configured."""
@@ -198,9 +217,34 @@ class OpenSearchPPLUser(HttpUser):
     wait_time = between(1, 3)
 
     def _select_random_query(self):
-        """Select a random query from the loaded queries."""
-        query_name = random.choice(list(self.queries.keys()))
-        return query_name, self.queries[query_name]
+        """Select a query, respecting slow query limit if configured."""
+        global slow_query_counter
+
+        if not SLOW_QUERY_LIMIT:
+            # Throttle disabled, pick any
+            query_name = random.choice(list(self.queries.keys()))
+            return query_name, self.queries[query_name], False
+
+        # Optimistically claim slot
+        with slow_query_lock:
+            slow_query_counter += 1
+            current = slow_query_counter
+
+        # Check if over limit or no slow queries
+        if current > SLOW_QUERY_LIMIT or not self.slow_queries:
+            with slow_query_lock:
+                slow_query_counter -= 1
+            # Use fast query
+            if self.fast_queries:
+                query_name = random.choice(list(self.fast_queries.keys()))
+                return query_name, self.fast_queries[query_name], False
+            # No fast available, use slow but uncounted
+            query_name = random.choice(list(self.slow_queries.keys()))
+            return query_name, self.slow_queries[query_name], False
+
+        # Under limit, proceed with slow (already counted)
+        query_name = random.choice(list(self.slow_queries.keys()))
+        return query_name, self.slow_queries[query_name], True
 
     def _parse_error_response(self, response):
         """Parse error response and extract meaningful error message."""
@@ -242,50 +286,57 @@ class OpenSearchPPLUser(HttpUser):
     @task
     def execute_ppl_query(self):
         """Execute a random PPL query against the cluster."""
-        query_name, query = self._select_random_query()
+        global slow_query_counter
 
-        # Create OTEL span for this query
-        span = otel_manager.create_query_span(
-            query_name, query, CONFIG["calcite"]["enabled"]
-        )
+        query_name, query, is_slow = self._select_random_query()
 
-        with self.client.post(
-            "/_plugins/_ppl",
-            json={"query": query},
-            headers={"Content-Type": "application/json"},
-            name=f"PPL Query: {query_name}",
-            catch_response=True,
-        ) as response:
-            try:
-                if span:
-                    span.add_event("query.sent")
+        try:
+            # Create OTEL span for this query
+            span = otel_manager.create_query_span(
+                query_name, query, CONFIG["calcite"]["enabled"]
+            )
 
-                self._handle_response(response)
+            with self.client.post(
+                "/_plugins/_ppl",
+                json={"query": query},
+                headers={"Content-Type": "application/json"},
+                name=f"PPL Query: {query_name}",
+                catch_response=True,
+            ) as response:
+                try:
+                    if span:
+                        span.add_event("query.sent")
 
-                # Record response details on span
-                if span:
-                    response_time_ms = response.elapsed.total_seconds() * 1000
-                    response_size = len(response.content) if response.content else 0
-                    error_msg = (
-                        None
-                        if response.status_code == 200
-                        else self._parse_error_response(response)
-                    )
+                    self._handle_response(response)
 
-                    otel_manager.record_query_response(
-                        span,
-                        response.status_code,
-                        response_time_ms,
-                        response_size,
-                        error_msg,
-                    )
-                    span.add_event("query.completed")
+                    # Record response details on span
+                    if span:
+                        response_time_ms = response.elapsed.total_seconds() * 1000
+                        response_size = len(response.content) if response.content else 0
+                        error_msg = (
+                            None
+                            if response.status_code == 200
+                            else self._parse_error_response(response)
+                        )
 
-            except Exception as e:
-                if span:
-                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                    span.record_exception(e)
-                response.failure(f"Request failed: {str(e)}")
-            finally:
-                if span:
-                    span.end()
+                        otel_manager.record_query_response(
+                            span,
+                            response.status_code,
+                            response_time_ms,
+                            response_size,
+                            error_msg,
+                        )
+                        span.add_event("query.completed")
+
+                except Exception as e:
+                    if span:
+                        span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                    response.failure(f"Request failed: {str(e)}")
+                finally:
+                    if span:
+                        span.end()
+        finally:
+            if is_slow:
+                with slow_query_lock:
+                    slow_query_counter -= 1
