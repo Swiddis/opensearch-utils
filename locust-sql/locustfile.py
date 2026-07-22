@@ -1,3 +1,4 @@
+import atexit
 import random
 import threading
 from pathlib import Path
@@ -41,15 +42,25 @@ def record_response(
     success = 1 if exception is None else 0
     status_code = None
     error_message = None
+    profile = None
 
     if hasattr(kwargs.get("response"), "status_code"):
         status_code = kwargs["response"].status_code
+
+    # Extract profile from response body if available
+    response = kwargs.get("response")
+    if response and response.status_code == 200:
+        try:
+            body = response.json()
+            profile = body.get("profile")
+        except Exception:
+            pass
 
     if exception:
         error_message = str(exception)
 
     db_manager.record_response(
-        query_name, response_time, status_code, success, error_message
+        query_name, response_time, status_code, success, error_message, profile
     )
 
 
@@ -57,19 +68,40 @@ def record_response(
 events.request.add_listener(record_response)
 
 
+def cleanup_run():
+    """Cleanup handler for run shutdown."""
+    if not db_manager._shutdown and db_manager.run_id:
+        db_manager.end_run("completed")
+        db_manager.flush_remaining()
+        otel_manager.shutdown()
+        if metrics_collector:
+            metrics_collector.shutdown()
+
+
+@events.test_start.add_listener
+def on_test_start(_environment, **_kwargs):
+    """Start a new run when test begins."""
+    db_manager.start_run()
+
+
+@events.test_stop.add_listener
+def on_test_stop(_environment, **_kwargs):
+    """End the current run when test stops."""
+    cleanup_run()
+
+
 @events.quitting.add_listener
 def on_quitting(_environment, **_kwargs):
     """Handle locust shutdown to mark run as completed."""
-    db_manager.flush_remaining()
-    db_manager.end_run("completed")
-    otel_manager.shutdown()
-    if metrics_collector:
-        metrics_collector.shutdown()
+    cleanup_run()
 
 
-# Initialize database and start run tracking
+# Fallback for Ctrl+C / kill scenarios where quitting event doesn't fire
+atexit.register(cleanup_run)
+
+
+# Initialize database schema
 db_manager.init_database()
-db_manager.start_run()
 
 
 class ThreadPoolMetrics:
@@ -298,7 +330,7 @@ class OpenSearchPPLUser(HttpUser):
 
             with self.client.post(
                 "/_plugins/_ppl",
-                json={"query": query},
+                json={"query": query, "profile": True},
                 headers={"Content-Type": "application/json"},
                 name=f"PPL Query: {query_name}",
                 catch_response=True,

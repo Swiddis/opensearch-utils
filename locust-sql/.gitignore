@@ -11,10 +11,12 @@ wheels/
 
 # Data files
 *.db
+*.duckdb
 config.toml
 run_ids.txt
 etc/
 otel_output/
+runs/
 
 # Data sets
 datasets/
