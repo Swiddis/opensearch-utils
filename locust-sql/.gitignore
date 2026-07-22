@@ -15,3 +15,10 @@ config.toml
 run_ids.txt
 etc/
 otel_output/
+
+# Data sets
+datasets/
+logs*/
+logs*.zip
+*.csv
+
