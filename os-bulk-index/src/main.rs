@@ -57,7 +57,7 @@ struct Cli {
     limit: Option<usize>,
 
     /// Number of documents per batch
-    #[arg(short, long, default_value_t = 8192)]
+    #[arg(short, long, default_value_t = 4096)]
     batch_size: usize,
 
     /// Maximum number of concurrent requests

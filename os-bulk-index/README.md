@@ -42,7 +42,7 @@ Options:
   -l, --limit <LIMIT>
           Maximum number of lines to read (optional, reads all if not specified)
   -b, --batch-size <BATCH_SIZE>
-          Number of documents per batch [default: 8192]
+          Number of documents per batch [default: 4096]
   -c, --concurrent-requests <CONCURRENT_REQUESTS>
           Maximum number of concurrent requests [default: 32]
       --max-pending-batches <MAX_PENDING_BATCHES>
