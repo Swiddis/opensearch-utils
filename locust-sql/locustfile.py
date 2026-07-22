@@ -1,5 +1,7 @@
 import atexit
 import random
+import signal
+import sys
 import threading
 from pathlib import Path
 
@@ -71,32 +73,40 @@ events.request.add_listener(record_response)
 def cleanup_run():
     """Cleanup handler for run shutdown."""
     if not db_manager._shutdown and db_manager.run_id:
-        db_manager.end_run("completed")
         db_manager.flush_remaining()
+        db_manager.end_run("completed")
         otel_manager.shutdown()
         if metrics_collector:
             metrics_collector.shutdown()
 
 
 @events.test_start.add_listener
-def on_test_start(_environment, **_kwargs):
+def on_test_start(*_args, **_kwargs):
     """Start a new run when test begins."""
     db_manager.start_run()
 
 
 @events.test_stop.add_listener
-def on_test_stop(_environment, **_kwargs):
+def on_test_stop(*_args, **_kwargs):
     """End the current run when test stops."""
     cleanup_run()
 
 
 @events.quitting.add_listener
-def on_quitting(_environment, **_kwargs):
+def on_quitting(*_args, **_kwargs):
     """Handle locust shutdown to mark run as completed."""
     cleanup_run()
 
 
-# Fallback for Ctrl+C / kill scenarios where quitting event doesn't fire
+# Signal handlers for graceful shutdown
+def signal_handler(signum, frame):
+    """Handle SIGINT/SIGTERM to ensure flush before exit."""
+    cleanup_run()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 atexit.register(cleanup_run)
 
 

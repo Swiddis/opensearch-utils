@@ -34,10 +34,12 @@ class DatabaseManager:
         self.parquet_dir = Path("runs")
         self.parquet_dir.mkdir(exist_ok=True)
         self._shutdown = False
+        self._batch_count = 0
 
-        # Batch writing configuration (override via BATCH_SIZE/FLUSH_INTERVAL env if needed)
+        # Batch writing configuration
         self.batch_size = 500
         self.flush_interval = 1.0
+        self.parquet_export_interval = 50  # export to parquet every N batches (0 = only at end)
         self.record_queue = Queue()
         self.writer_running = True
 
@@ -81,6 +83,7 @@ class DatabaseManager:
         """Record the start of a new load test run."""
         self.run_id = str(uuid4())
         self._shutdown = False
+        self._batch_count = 0
         start_time = datetime.now(UTC).isoformat()
         tracking_method = self.config["run_tracking"]["method"]
 
@@ -102,9 +105,26 @@ class DatabaseManager:
         else:
             raise ValueError(f"Invalid run_tracking.method: {tracking_method}")
 
+    def _export_to_parquet(self):
+        """Export current run's data to parquet (lock must be held by caller)."""
+        if not self.run_id:
+            return
+
+        parquet_file = self.parquet_dir / f"{self.run_id}.parquet"
+        con = duckdb.connect(self.db_file)
+        result = con.execute("SELECT COUNT(*) FROM response_times WHERE run_id = ?", [self.run_id]).fetchone()
+        record_count = result[0] if result else 0
+
+        if record_count > 0:
+            con.execute(
+                f"COPY (SELECT * FROM response_times WHERE run_id = ?) TO '{parquet_file}' (FORMAT PARQUET)",
+                [self.run_id]
+            )
+        con.close()
+
     def end_run(self, status="completed"):
-        """Record the end of a load test run."""
-        if self._shutdown:
+        """Record the end of a load test run and export to parquet."""
+        if self._shutdown or not self.run_id:
             return
         self._shutdown = True
 
@@ -119,7 +139,22 @@ class DatabaseManager:
                     (end_time, status, self.run_id),
                 )
                 con.close()
-            print(f"Ended run {self.run_id} at {end_time} with status: {status}")
+
+                # Final parquet export
+                self._export_to_parquet()
+
+                # Report
+                con = duckdb.connect(self.db_file)
+                result = con.execute("SELECT COUNT(*) FROM response_times WHERE run_id = ?", [self.run_id]).fetchone()
+                record_count = result[0] if result else 0
+                con.close()
+
+                parquet_file = self.parquet_dir / f"{self.run_id}.parquet"
+                if record_count > 0:
+                    print(f"Ended run {self.run_id} at {end_time} with status: {status} ({record_count} records → {parquet_file.name})")
+                else:
+                    print(f"Ended run {self.run_id} at {end_time} with status: {status} (no records)")
+
         elif tracking_method == "file":
             run_file = self.config["run_tracking"].get("file", "run_ids.txt")
             with open(run_file, "a") as fp:
@@ -160,7 +195,7 @@ class DatabaseManager:
             self._flush_batch(batch)
 
     def _flush_batch(self, batch):
-        """Flush a batch of records to parquet via DuckDB."""
+        """Flush a batch of records to DuckDB."""
         if not batch:
             return
 
@@ -173,12 +208,13 @@ class DatabaseManager:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 batch,
             )
-            parquet_file = self.parquet_dir / f"{self.run_id}.parquet"
-            con.execute(
-                f"COPY (SELECT * FROM response_times WHERE run_id = ?) TO '{parquet_file}' (FORMAT PARQUET)",
-                [self.run_id]
-            )
             con.close()
+
+            # Incremental parquet export if configured
+            if self.parquet_export_interval > 0 and self.run_id:
+                self._batch_count += 1
+                if self._batch_count % self.parquet_export_interval == 0:
+                    self._export_to_parquet()
 
     def record_response(
         self, query_name, response_time, status_code, success, error_message, profile=None
