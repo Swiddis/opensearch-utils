@@ -45,6 +45,9 @@ class DatabaseManager:
     def init_database(self):
         """Initialize the SQLite database and create necessary tables."""
         conn = sqlite3.connect(self.db_file)
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         cursor = conn.cursor()
 
         cursor.execute(
@@ -103,9 +106,6 @@ class DatabaseManager:
             config_snapshot = json.dumps(self.config, indent=2)
             with self.db_lock:
                 conn = sqlite3.connect(self.db_file)
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
-
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO runs (run_id, start_time, status, config_snapshot) VALUES (?, ?, ?, ?)",

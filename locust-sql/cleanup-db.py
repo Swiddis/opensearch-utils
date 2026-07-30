@@ -21,4 +21,6 @@ cur.execute(
 cur.execute("DELETE FROM runs WHERE start_time < ?", (CUTOFF.isoformat(),))
 conn.commit()
 
+conn.execute("PRAGMA incremental_vacuum")
+
 print(f"Deleted {rows:,} rows from {run_ids} old runs (cutoff: {CUTOFF.date()})")
