@@ -87,7 +87,8 @@ class DatabaseManager:
                 start_time TEXT NOT NULL,
                 end_time TEXT,
                 status TEXT NOT NULL,
-                config_snapshot TEXT
+                config_snapshot TEXT,
+                comment TEXT
             )
         """
         )
