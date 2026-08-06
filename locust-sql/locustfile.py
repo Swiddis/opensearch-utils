@@ -19,7 +19,7 @@ db_manager = DatabaseManager(CONFIG)
 # Slow query throttling
 slow_query_counter = 0
 slow_query_lock = threading.Lock()
-SLOW_QUERY_LIMIT = CONFIG.get("throttle", {}).get("limit", 0)  # 0 = disabled
+SLOW_QUERY_LIMIT = CONFIG.get("throttle", {}).get("limit", -1)  # <0 = disabled
 SLOW_QUERY_PATTERN = CONFIG.get("throttle", {}).get("pattern", None)
 
 # OTEL tracing manager (if enabled)
@@ -262,7 +262,7 @@ class OpenSearchPPLUser(HttpUser):
         """Select a query, respecting slow query limit if configured."""
         global slow_query_counter
 
-        if not SLOW_QUERY_LIMIT:
+        if SLOW_QUERY_LIMIT < 0:
             # Throttle disabled, pick any
             query_name = random.choice(list(self.queries.keys()))
             return query_name, self.queries[query_name], False
