@@ -1,5 +1,6 @@
 """Database and configuration management for Locust load tests."""
 
+import copy
 import json
 import sqlite3
 import threading
@@ -104,7 +105,12 @@ class DatabaseManager:
         tracking_method = self.config["run_tracking"]["method"]
 
         if tracking_method == "database":
-            config_snapshot = json.dumps(self.config, indent=2)
+            # ponytail: anonymize password before saving
+            config_copy = copy.deepcopy(self.config)
+            if len(config_copy.get("opensearch", {}).get("password", "")) > 0:
+                config_copy["opensearch"]["password"] = "***"
+            config_snapshot = json.dumps(config_copy, indent=2)
+
             with self.db_lock:
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
